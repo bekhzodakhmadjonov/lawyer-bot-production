@@ -1,0 +1,37 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+.env
+.env.local
+.env.production
+
+.pytest_cache/
+.ruff_cache/
+
+pgdata/
+redisdata/
+
+.vscode/
+.idea/
+.DS_Store
+
+# Production-specific additions
+data/
+data/logs/
+data/backups/
+*.db
+*.db.gz
+*.log
+
+# Claude/IDE folders
+claude_folder/
+.history/
+
+# OS files
+Thumbs.db
+*.swp
+*.swo
+*~

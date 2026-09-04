@@ -1,0 +1,22 @@
+name: lawyerbot
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: lawyer-bot:latest
+    container_name: lawyer_bot_app
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    volumes:
+      - ./data:/app/data
+    networks:
+      - lawyer_net
+
+networks:
+  lawyer_net:
+    driver: bridge
