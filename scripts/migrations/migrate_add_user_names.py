@@ -10,11 +10,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from sqlalchemy import text
-from src.infrastructure.persistence.database import (
+from infrastructure.persistence.database import (
     create_engine,
     create_session_factory,
 )
-from src.config.settings import Settings
+from config.settings import Settings
 
 
 async def migrate():

@@ -13,6 +13,12 @@ from dataclasses import dataclass
 import structlog
 from openai import AsyncOpenAI, OpenAIError
 from pydantic import BaseModel, Field
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential,
+    retry_if_exception_type,
+)
 
 logger = structlog.get_logger()
 
@@ -127,6 +133,12 @@ SUHBAT BOSQICHLARI (Lead Generation - MUHIM):
         self._model = model
         self._system_prompt = system_prompt
 
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_exception_type(OpenAIError),
+        reraise=True,
+    )
     async def answer(
         self,
         *,
@@ -156,8 +168,14 @@ SUHBAT BOSQICHLARI (Lead Generation - MUHIM):
                 messages=messages,
                 max_tokens=800,
                 temperature=0.3,
+                timeout=30.0,
             )
         except OpenAIError as exc:
+            logger.error(
+                "OpenAI API call failed",
+                error=str(exc),
+                attempt="retrying",
+            )
             raise OpenAIChatAdapterError(
                 "OpenAI chat completion request failed."
             ) from exc

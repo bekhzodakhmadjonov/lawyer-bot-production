@@ -633,7 +633,7 @@ wheels = [
 ]
 
 [[package]]
-name = "lawyer-bot"
+name = "lawyer-bot-production"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

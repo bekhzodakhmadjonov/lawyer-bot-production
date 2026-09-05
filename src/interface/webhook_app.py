@@ -30,6 +30,7 @@ from aiogram.types import (
 )
 from fastapi import FastAPI, Header, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+from sqlalchemy import text
 
 from config.container import Container
 from config.settings import Settings
@@ -277,20 +278,30 @@ async def health_check(
 
     # Check database connectivity
     db_healthy = True
+    db_latency_ms = 0
     try:
+        import time
         session_factory = request.app.state.dp.workflow_data["session_factory"]
+        start_time = time.time()
         async with session_factory() as session:
-            await session.execute("SELECT 1")
+            await session.execute(text("SELECT 1"))
+        db_latency_ms = int((time.time() - start_time) * 1000)
     except Exception as exc:
         db_healthy = False
+        db_latency_ms = -1
         logger.error("Database health check failed", error=str(exc))
 
     # Check bot connectivity
     bot_healthy = True
+    bot_latency_ms = 0
     try:
+        import time
+        start_time = time.time()
         await bot.get_me()
+        bot_latency_ms = int((time.time() - start_time) * 1000)
     except Exception as exc:
         bot_healthy = False
+        bot_latency_ms = -1
         logger.error("Bot health check failed", error=str(exc))
 
     overall_healthy = db_healthy and bot_healthy
@@ -299,8 +310,16 @@ async def health_check(
         "status": "healthy" if overall_healthy else "unhealthy",
         "service": "lawyer-bot",
         "mode": "ai-lead-intake",
-        "database": "ok" if db_healthy else "error",
-        "bot": "ok" if bot_healthy else "error",
+        "environment": settings.environment.value,
+        "database": {
+            "status": "ok" if db_healthy else "error",
+            "latency_ms": db_latency_ms,
+        },
+        "bot": {
+            "status": "ok" if bot_healthy else "error",
+            "latency_ms": bot_latency_ms,
+        },
+        "timestamp": __import__("datetime").datetime.utcnow().isoformat(),
     }
 
 

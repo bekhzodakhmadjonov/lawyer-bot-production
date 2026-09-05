@@ -11,12 +11,9 @@ tarjima qiladi.
 
 from __future__ import annotations
 
-import os
-import stat
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime
-from pathlib import Path
 from uuid import UUID
 
 from sqlalchemy import JSON, BigInteger, DateTime, ForeignKey, String, Text
@@ -96,7 +93,7 @@ class RateLimitModel(Base):
 
     user_id: Mapped[UUID] = mapped_column(primary_key=True)
     message_count: Mapped[int] = mapped_column(default=0)
-    last_reset: Mapped[datetime] = mapped_column(DateTime())
+    last_reset: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     # Burst detection: track recent message timestamps (JSON array)
     recent_timestamps: Mapped[str] = mapped_column(Text, default="[]")
     # Violation tracking for progressive penalties
@@ -133,22 +130,26 @@ class AdminNotificationModel(Base):
 
 
 def create_engine(settings: Settings) -> AsyncEngine:
-    # SQLite fayl bazasi yaratish
-    db_path = Path("data/lawyer_bot.db")
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-
-    # Set restrictive permissions on existing database file
-    if db_path.exists():
-        try:
-            os.chmod(
-                db_path, stat.S_IRUSR | stat.S_IWUSR
-            )  # 600 - read/write for owner only
-        except OSError:
-            # Log warning but don't fail if permissions can't be set
-            pass
-
-    db_url = f"sqlite+aiosqlite:///{db_path}"
-    return create_async_engine(db_url)
+    # PostgreSQL with connection pooling for production
+    db_url = settings.database_url
+    
+    # For self-hosted PostgreSQL (Oracle Cloud VM), no SSL required
+    # For external PostgreSQL (Supabase, etc.), use SSL
+    use_ssl = not settings.environment.value == "local"
+    
+    connect_args = {"timeout": 30}
+    if use_ssl:
+        connect_args["ssl"] = "require"
+    
+    return create_async_engine(
+        db_url,
+        pool_size=20,
+        max_overflow=10,
+        pool_pre_ping=True,
+        pool_recycle=3600,
+        echo=settings.environment.value == "local",
+        connect_args=connect_args,
+    )
 
 
 def create_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:

@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     # --- Umumiy ---
     environment: Environment = Environment.LOCAL
 
+    # --- Database ---
+    database_url: str = "postgresql+asyncpg://user:password@localhost/lawyer_bot"
+
     # --- Telegram ---
     telegram_bot_token: str = ""
     telegram_webhook_secret: str = ""

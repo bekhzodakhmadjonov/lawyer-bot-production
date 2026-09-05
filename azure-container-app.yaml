@@ -1,0 +1,80 @@
+apiVersion: apps/v1
+kind: ContainerApp
+metadata:
+  name: lawyer-bot
+  namespace: default
+spec:
+  configuration:
+    ingress:
+      external: true
+      targetPort: 8000
+      customDomains:
+        - name: lawyer-bot.your-domain.com
+  template:
+    containers:
+    - image: lawyer-bot:latest
+      name: lawyer-bot
+      resources:
+        cpu: 0.5
+        memory: 1Gi
+      env:
+      - name: DATABASE_URL
+        secretRef: database-url
+      - name: OPENAI_API_KEY
+        secretRef: openai-api-key
+      - name: TELEGRAM_BOT_TOKEN
+        secretRef: telegram-bot-token
+      - name: TELEGRAM_WEBHOOK_SECRET
+        secretRef: telegram-webhook-secret
+      - name: TELEGRAM_WEBHOOK_URL
+        value: https://lawyer-bot.your-domain.com
+      - name: TELEGRAM_LEAD_CHAT_ID
+        value: "YOUR_CHAT_ID"
+      - name: REQUIRED_CHANNEL_USERNAME
+        value: "YOUR_CHANNEL_USERNAME"
+      - name: REQUIRED_CHANNEL_ID
+        value: "YOUR_CHANNEL_ID"
+      - name: ENVIRONMENT
+        value: "production"
+    scale:
+      minReplicas: 1
+      maxReplicas: 10
+      rules:
+      - http:
+          concurrentRequests: 20
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: database-url
+  namespace: default
+type: Opaque
+stringData:
+  database-url: "postgresql+asyncpg://user:password@host/dbname"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: openai-api-key
+  namespace: default
+type: Opaque
+stringData:
+  openai-api-key: "your-openai-api-key"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: telegram-bot-token
+  namespace: default
+type: Opaque
+stringData:
+  telegram-bot-token: "your-telegram-bot-token"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: telegram-webhook-secret
+  namespace: default
+type: Opaque
+stringData:
+  telegram-webhook-secret: "your-webhook-secret"

@@ -1,0 +1,44 @@
+# Lawyer Bot Domain
+lawyer-bot-uz.duckdns.org {
+    # Reverse proxy to the bot container
+    reverse_proxy bot:8000
+
+    # Health check endpoint (no auth required)
+    handle /health {
+        reverse_proxy bot:8000
+    }
+
+    # Webhook endpoint for Telegram
+    handle /webhook {
+        reverse_proxy bot:8000
+    }
+
+    # Security headers
+    header {
+        # Enable HSTS
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+
+        # Prevent clickjacking
+        X-Frame-Options "SAMEORIGIN"
+
+        # Prevent MIME type sniffing
+        X-Content-Type-Options "nosniff"
+
+        # XSS protection
+        X-XSS-Protection "1; mode=block"
+
+        # Remove server info
+        -Server
+    }
+
+    # Logging
+    log {
+        output file /var/log/caddy/access.log
+        format json
+    }
+}
+
+# HTTP to HTTPS redirect
+http://lawyer-bot-uz.duckdns.org {
+    redir https://lawyer-bot-uz.duckdns.org{uri} permanent
+}

@@ -1,22 +1,76 @@
-name: lawyerbot
+name: lawyer-bot-production
 
 services:
-  app:
+  bot:
     build:
       context: .
       dockerfile: Dockerfile
-    image: lawyer-bot:latest
-    container_name: lawyer_bot_app
+    image: lawyer-bot-production:latest
+    container_name: lawyer_bot
     restart: unless-stopped
     env_file:
       - .env
-    ports:
-      - "${APP_PORT:-8000}:8000"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:${POSTGRES_PASSWORD}@postgres:5432/lawyer_bot
+    depends_on:
+      postgres:
+        condition: service_healthy
     volumes:
       - ./data:/app/data
     networks:
-      - lawyer_net
+      - lawyer_bot_net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: lawyer_bot_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: lawyer_bot
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - lawyer_bot_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d lawyer_bot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # Expose only on internal network, not to internet
+    expose:
+      - "5432"
+
+  caddy:
+    image: caddy:latest
+    container_name: lawyer_bot_caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - bot
+    networks:
+      - lawyer_bot_net
+
+volumes:
+  postgres_data:
+    driver: local
+  caddy_data:
+    driver: local
+  caddy_config:
+    driver: local
 
 networks:
-  lawyer_net:
+  lawyer_bot_net:
     driver: bridge
