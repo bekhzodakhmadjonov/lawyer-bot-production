@@ -132,15 +132,15 @@ class AdminNotificationModel(Base):
 def create_engine(settings: Settings) -> AsyncEngine:
     # PostgreSQL with connection pooling for production
     db_url = settings.database_url
-    
+
     # For self-hosted PostgreSQL (Oracle Cloud VM), no SSL required
     # For external PostgreSQL (Supabase, etc.), use SSL
     use_ssl = not settings.environment.value == "local"
-    
-    connect_args = {"timeout": 30}
+
+    connect_args = {"timeout": 10}  # Reduced timeout for faster failure detection
     if use_ssl:
         connect_args["ssl"] = "require"
-    
+
     return create_async_engine(
         db_url,
         pool_size=20,

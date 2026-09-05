@@ -197,6 +197,7 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     application.state.bot = bot
     application.state.dp = dp
     application.state.settings = settings
+    application.state.container = container
 
     # Webhook o'rnatish
     webhook_url = f"{settings.telegram_webhook_url}/webhook"
@@ -318,7 +319,7 @@ async def health_check(
     try:
         import time
         start_time = time.time()
-        redis_client = await container.redis_client
+        redis_client = await request.app.state.container.redis_client
         await redis_client.client.ping()
         redis_latency_ms = int((time.time() - start_time) * 1000)
     except Exception as exc:
