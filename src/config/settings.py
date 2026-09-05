@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     # --- Database ---
     database_url: str = "postgresql+asyncpg://user:password@localhost/lawyer_bot"
 
+    # --- Redis ---
+    redis_url: str = "redis://localhost:6379/0"
+
     # --- Telegram ---
     telegram_bot_token: str = ""
     telegram_webhook_secret: str = ""

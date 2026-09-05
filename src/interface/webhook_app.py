@@ -41,6 +41,7 @@ from infrastructure.persistence.sqlite_lead_repo import SQLiteLeadRepo
 from infrastructure.persistence.sqlite_notification_registry import (
     SQLiteNotificationRegistry,
 )
+from infrastructure.persistence.redis_rate_limiter import RedisRateLimiter
 from infrastructure.persistence.sqlite_rate_limiter import SQLiteRateLimiter
 from infrastructure.persistence.sqlite_user_repo import SQLiteUserRepo
 from infrastructure.telegram.aiogram_bot import create_bot, create_dispatcher
@@ -143,13 +144,20 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         )
 
     # Per-request dependency'lar uchun factory — handler'lar shu orqali oladi
-    def _build_request_deps(session: AsyncSession) -> dict:
+    async def _build_request_deps(session: AsyncSession) -> dict:
         """Har bir xabar uchun yangi session-scoped dependency'lar."""
         conversation_repo = SQLiteConversationRepo(session)
         lead_repo = SQLiteLeadRepo(session)
         user_repo = SQLiteUserRepo(session)
-        rate_limiter = SQLiteRateLimiter(session)
         notification_registry = SQLiteNotificationRegistry(session)
+
+        # Use Redis rate limiter if available, otherwise fallback to SQLite
+        try:
+            redis_client = await container.redis_client
+            rate_limiter = RedisRateLimiter(redis_client)
+        except Exception:
+            # Fallback to SQLite if Redis is not available
+            rate_limiter = SQLiteRateLimiter(session)
 
         # Notifier per-request: session-aware registry bilan yaratiladi
         per_request_notifier = TelegramAdminNotifier(
@@ -255,7 +263,7 @@ async def webhook_handler(
 
     async with session_factory() as session:
         try:
-            request_deps = build_request_deps(session)
+            request_deps = await build_request_deps(session)
             # Add user_repo to workflow_data for callback handlers
             dp.workflow_data["user_repo"] = request_deps["user_repo"]
             await dp.feed_update(bot=bot, update=update, **request_deps)
@@ -304,7 +312,21 @@ async def health_check(
         bot_latency_ms = -1
         logger.error("Bot health check failed", error=str(exc))
 
-    overall_healthy = db_healthy and bot_healthy
+    # Check Redis connectivity
+    redis_healthy = True
+    redis_latency_ms = 0
+    try:
+        import time
+        start_time = time.time()
+        redis_client = await container.redis_client
+        await redis_client.client.ping()
+        redis_latency_ms = int((time.time() - start_time) * 1000)
+    except Exception as exc:
+        redis_healthy = False
+        redis_latency_ms = -1
+        logger.error("Redis health check failed", error=str(exc))
+
+    overall_healthy = db_healthy and bot_healthy and redis_healthy
 
     return {
         "status": "healthy" if overall_healthy else "unhealthy",
@@ -318,6 +340,10 @@ async def health_check(
         "bot": {
             "status": "ok" if bot_healthy else "error",
             "latency_ms": bot_latency_ms,
+        },
+        "redis": {
+            "status": "ok" if redis_healthy else "error",
+            "latency_ms": redis_latency_ms,
         },
         "timestamp": __import__("datetime").datetime.utcnow().isoformat(),
     }

@@ -15,6 +15,7 @@ from application.use_cases.conversation.handle_user_message import (
 )
 from config.settings import Settings
 from infrastructure.ai.openai_chat_adapter import OpenAIChatAdapter
+from infrastructure.cache import close_redis_client, get_redis_client
 
 
 class Container:
@@ -34,6 +35,8 @@ class Container:
         self.http_client = httpx.AsyncClient(timeout=10)
         # GPT faqat suhbat (Lead Gen) uchun ishlaydi
         self.openai_chat = OpenAIChatAdapter(self.openai_client)
+        # Redis client will be initialized on first use
+        self._redis_client = None
 
     def build_handle_user_message_use_case(
         self,
@@ -58,6 +61,13 @@ class Container:
             lead_repo=lead_repo,
         )
 
+    @property
+    async def redis_client(self):
+        """Get Redis client (lazy initialization)."""
+        if self._redis_client is None:
+            self._redis_client = await get_redis_client(self.settings)
+        return self._redis_client
+
     async def __aenter__(self) -> Self:
         if self._closed:
             raise RuntimeError("A closed container cannot be restarted.")
@@ -73,6 +83,7 @@ class Container:
         self._closed = True
         await self.openai_client.close()
         await self.http_client.aclose()
+        await close_redis_client()
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}(settings=Settings(...))"
