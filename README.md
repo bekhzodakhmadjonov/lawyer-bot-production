@@ -4,106 +4,166 @@ Advokat Jasurbek jamoasi uchun Telegram asosidagi AI lead intake bot.
 
 Botning vazifasi foydalanuvchiga yuridik maslahat berish emas. U mijoz vaziyatini tartibli aniqlaydi, lead sifatini oshiradi va tayyor murojaatlarni admin/yurist guruhiga yuboradi.
 
-## Core Flow
+This bot provides:
+- **Legal Information**: Answers general legal questions using Gemini Flash with web search and citations
+- **Lead Qualification**: Qualifies high-intent users and escalates to lawyers
+- **Intent-Based Routing**: Automatically detects informational queries vs service requests
+- **Cost Optimization**: Tiered AI strategy with response caching (50-70% cost reduction)
 
-1. **Channel gate** — foydalanuvchi rasmiy kanalga a'zo bo'lmasa, botdan foydalanishga yo'naltiriladi.
-2. **Rate limit** — har bir foydalanuvchi uchun soatlik xabar limiti qo'llanadi.
-3. **AI intake** — GPT foydalanuvchi tilida qisqa, empatik savollar beradi.
-4. **Lead qualification** — bot muammo, hudud, muddat/shoshilinchlik, hujjatlar va telefon bor-yo'qligini baholaydi.
-5. **Human handoff** — lead tayyor bo'lsa, suhbat admin guruhiga strukturali anketa va transcript bilan yuboriladi.
-6. **Admin reply** — admin bot notification'iga reply qilsa, javob foydalanuvchiga boradi.
-7. **Return to AI** — foydalanuvchi kerak bo'lsa AI yordamchiga qaytishi mumkin.
+## Version 2 Changes
+
+### New Features
+- **Legal Information Mode**: Uses Gemini Flash with web search to answer general legal questions
+- **Intent-Based Routing**: Automatically routes informational queries to Gemini, service requests to OpenAI
+- **Response Caching**: Redis-based caching with tiered TTLs (24h for informational, 1h for intake)
+- **Improved Escalation**: Only escalates qualified leads, not informational queries
+
+### Optimizations
+- **Resource Usage**: Reduced PostgreSQL pool from 30 to 8 connections, Redis from 20 to 10
+- **Message History**: Reduced from 16 to 8 messages for performance
+- **Removed Components**: Multi-turn analyzer, conversation summarizer, SQLite rate limiter fallback
+- **Code Cleanup**: Renamed sqlite_* repos to postgres_* for consistency
+
+### Cost Savings
+- **AI Costs**: 50-70% reduction via caching + tiered models
+- **Infrastructure**: Near $0 (Oracle Free Tier)
+- **Estimated Monthly**: $10-20 for 5K users (vs $30-50 previous)
 
 ## Architecture
 
-- **Domain** (`src/domain/`): `User`, `Conversation`, `Message`, `Lead` va value object'lar.
-- **Application** (`src/application/`): suhbatni boshqarish, eskalatsiya, admin reply use case'lari.
-- **Infrastructure** (`src/infrastructure/`): OpenAI, Telegram, SQLite adapterlari.
-- **Interface** (`src/interface/`): FastAPI webhook va health endpoint.
+```
+┌─────────────┐
+│  Telegram   │
+│   Webhook   │
+└──────┬──────┘
+       │
+       ▼
+┌─────────────┐
+│ FastAPI     │
+│  Webhook    │
+└──────┬──────┘
+       │
+       ▼
+┌─────────────┐
+│  Aiogram    │
+│  Dispatcher │
+└──────┬──────┘
+       │
+       ▼
+┌─────────────┐
+│ Intent      │
+│  Router     │
+└──────┬──────┘
+       │
+       ├─────────────┬─────────────┐
+       │             │             │
+       ▼             ▼             ▼
+┌─────────┐  ┌──────────┐  ┌──────────┐
+│ Gemini  │  │  OpenAI  │  │PostgreSQL│
+│ (Info)  │  │ (Leads)  │  │  (Data)  │
+└────┬────┘  └────┬─────┘  └────┬─────┘
+     │            │              │
+     └────────────┴──────────────┘
+                  │
+                  ▼
+           ┌──────────┐
+           │  Redis   │
+           │ (Cache)  │
+           └──────────┘
+```
 
 ## AI Behavior
 
-AI intake assistant quyidagilarni qiladi:
+### Informational Queries (Gemini Flash)
+- Answers general legal questions with citations
+- Uses web search for up-to-date information
+- Provides disclaimer: "This is general information, not legal advice"
+- Includes soft CTA for lawyer consultation
+- Cached for 24 hours
 
-- vaziyatni 2-3 gapda tushuntirishni so'raydi;
-- bir javobda eng muhim 1-2 savolni beradi;
-- hudud, hujjatlar, muddat va shoshilinchlikni aniqlaydi;
-- handoffga yaqin telefon raqamni muloyim so'raydi;
-- pullik konsultatsiya ekanini aniq aytadi;
-- yuridik maslahat, qonun moddasi, jarima, muddat yoki kafolatli natija bermaydi.
+### Service Requests (OpenAI GPT-4o-mini)
+- Collects user situation information
+- Qualifies leads based on conversation signals
+- Escalates qualified leads to admin/lawyer group
+- Empathetic questioning about problem, location, urgency, documents, phone
 
 ## Admin Commands
 
-Admin guruhida:
+Admin commands are available in the lawyer group only:
 
-```text
-/stats
-/leads
-/close
-```
-
-- `/stats` qisqa operational statistika beradi: 24 soatdagi suhbatlar, leadlar, jami suhbatlar, eskalatsiya kutayotganlar va conversion rate.
-- `/leads` leadlar ro'yxatini pagination bilan ko'rsatadi. Filterlash va saralash mumkin:
-  - `/leads` - barcha leadlar
-  - `/leads ochiq` - ochiq leadlar
-  - `/leads yangi` - yangi leadlar
-  - `/leads yuqori` - yuqori balli leadlar
-  - `/leads {raqam}` - bitta leadni ko'rsatadi va status o'zgartirish tugmalarini beradi
-- `/close` bot notification'iga reply qilib yozilsa, shu foydalanuvchi suhbatini yopadi.
-
-Lead notification'larida inline tugmalar ham bor:
-
-- `Bog'landim`
-- `Belgilandi`
-- `To'langan`
-- `Yo'qolgan`
-- `Yopilgan`
+- `/stats` - View conversation statistics
+- `/leads` - View list of leads with pagination
+- `/users` - View list of users
+- `/close` - Close a conversation
 
 ## Environment Variables
 
-`.env` faylida:
+Required environment variables:
 
-```env
-OPENAI_API_KEY=
+```bash
+# Environment
+ENVIRONMENT=production
 
-TELEGRAM_BOT_TOKEN=
-TELEGRAM_WEBHOOK_SECRET=
-TELEGRAM_WEBHOOK_URL=https://your-domain.com
-TELEGRAM_LEAD_CHAT_ID=
-REQUIRED_CHANNEL_USERNAME=
-REQUIRED_CHANNEL_ID=
+# Database (PostgreSQL)
+DATABASE_URL=postgresql+asyncpg://user:password@host/db
+
+# Redis (for caching and rate limiting)
+REDIS_URL=redis://localhost:6379/0
+
+# AI Provider
+OPENAI_API_KEY=your_openai_api_key
+GEMINI_API_KEY=your_gemini_api_key
+
+# Telegram Bot Config
+TELEGRAM_BOT_TOKEN=your_bot_token
+TELEGRAM_WEBHOOK_SECRET=your_webhook_secret
+TELEGRAM_WEBHOOK_URL=https://yourdomain.com
+TELEGRAM_LEAD_CHAT_ID=your_admin_chat_id
+REQUIRED_CHANNEL_USERNAME=@your_channel
+REQUIRED_CHANNEL_ID=123456789
 ```
 
 ## Local Development
 
-```bash
-python init_db.py
-python scripts/migrations/migrate_add_lead_status.py
-python scripts/migrations/migrate_add_message_count.py
-python scripts/migrations/migrate_remove_citations_column.py
-python -m src.interface.webhook_app
-```
+1. Copy `.env.example` to `.env` and fill in values
+2. Install dependencies: `pip install -r requirements.txt`
+3. Run with: `python -m src.interface.webhook_app`
 
-## Deployment Guide
+## Deployment
 
-### Docker Deployment
+### Docker Compose (Recommended)
 
 ```bash
-# Build image
-docker build -t lawyer-bot:latest .
-
-# Run with docker-compose
-docker compose up -d
-
-# Or run manually
-docker run -d \
-  --name lawyer_bot \
-  --env-file .env \
-  -v $(pwd)/data:/app/data \
-  -p 8000:8000 \
-  --restart unless-stopped \
-  lawyer-bot:latest
+docker-compose up -d
 ```
+
+This starts:
+- Bot application
+- PostgreSQL database
+- Redis cache
+- Caddy reverse proxy (with SSL)
+
+## Troubleshooting
+
+### Bot not responding
+- Check webhook is set: `curl https://yourdomain.com/health`
+- Check logs: `docker logs lawyer_bot`
+- Verify Telegram token is valid
+
+### Database connection issues
+- Check DATABASE_URL is correct
+- Verify PostgreSQL is running
+- Check network connectivity
+
+### Rate limiting issues
+- Check Redis is running
+- Verify REDIS_URL is correct
+- Check rate limit settings in code
+
+### Gemini API issues
+- Verify GEMINI_API_KEY is valid
+- Check API quota (5K free requests/month)
+- Fallback to OpenAI if Gemini fails
 
 ### Azure Container Instances Deployment
 

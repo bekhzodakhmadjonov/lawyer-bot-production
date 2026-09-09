@@ -89,6 +89,10 @@ class Conversation:
     message_count: int = 0
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    # Dynamic lead scoring fields (optional)
+    dynamic_score: float | None = None
+    score_factors: object | None = None  # LeadScoreFactors
+    enhanced_data: object | None = None  # EnhancedResponse
 
     @classmethod
     def start(cls, user_id: UUID, *, user_telegram_id: int) -> Conversation:
@@ -113,6 +117,18 @@ class Conversation:
     def return_to_ai(self) -> None:
         self.status = ConversationStatus.AI_HANDLED
         self.assigned_admin_telegram_id = None
+        self.updated_at = datetime.now(UTC)
+
+    def start_collecting_info(self) -> None:
+        """Transition to collecting_info state when AI needs more information."""
+        if self.status == ConversationStatus.CLOSED:
+            raise ConversationClosedError(self.id)
+        self.status = ConversationStatus.COLLECTING_INFO
+        self.updated_at = datetime.now(UTC)
+
+    def finish_collecting_info(self) -> None:
+        """Return to AI_HANDLED after collecting sufficient information."""
+        self.status = ConversationStatus.AI_HANDLED
         self.updated_at = datetime.now(UTC)
 
     def close(self) -> None:

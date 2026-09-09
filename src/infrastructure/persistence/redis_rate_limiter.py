@@ -20,7 +20,7 @@ class RedisRateLimiter:
     BURST_WINDOW = timedelta(minutes=1)
 
     # Progressive penalty settings
-    FIRST_VIOLATION_PENALTY = timedelta(minutes=0)  # Warning only
+    FIRST_VIOLATION_PENALTY = timedelta(minutes=5)  # 5 minute cooldown
     SECOND_VIOLATION_PENALTY = timedelta(minutes=30)  # 30 minute cooldown
     REPEAT_VIOLATION_PENALTY = timedelta(hours=1)  # 1 hour cooldown
     VIOLATION_RESET_WINDOW = timedelta(hours=24)  # Reset violation count after 24h
@@ -50,6 +50,12 @@ class RedisRateLimiter:
         now = datetime.now(UTC)
         user_key = self._get_user_key(user_id)
         violation_key = self._get_violation_key(user_id)
+
+        cooldown_str = await self._redis.get(f"cooldown:{user_id}")
+        if cooldown_str:
+            cooldown_end = datetime.fromisoformat(cooldown_str).replace(tzinfo=UTC)
+            if cooldown_end > now:
+                return False, cooldown_end, "burst"
 
         # Get current rate limit data from Redis
         rate_data = await self._redis.get_json(user_key)
@@ -91,7 +97,9 @@ class RedisRateLimiter:
 
         if len(recent_timestamps) >= self.MAX_BURST_MESSAGES:
             # Burst limit exceeded - apply cooldown
-            cooldown_end = now + await self._get_penalty_cooldown(violation_key)
+            cooldown = await self._get_penalty_cooldown(violation_key)
+            cooldown_end = now + cooldown
+            await self._redis.set(f"cooldown:{user_id}", cooldown_end.isoformat(), ttl=int(cooldown.total_seconds()))
             await self._record_violation(violation_key)
             return False, cooldown_end, "burst"
 
@@ -148,3 +156,18 @@ class RedisRateLimiter:
         violation_key = self._get_violation_key(user_id)
         await self._redis.delete(user_key)
         await self._redis.delete(violation_key)
+
+    async def acquire_processing_lock(self, user_id: UUID, ttl: int = 60) -> bool:
+        """Foydalanuvchi uchun ishlov berish qulfini olishga urinish.
+        
+        Returns True if lock was acquired, False if user is already being processed.
+        TTL ensures lock auto-expires if something goes wrong.
+        """
+        result = await self._redis.client.set(
+            f"processing:{user_id}", "1", nx=True, ex=ttl
+        )
+        return result is not None
+
+    async def release_processing_lock(self, user_id: UUID) -> None:
+        """Foydalanuvchi uchun ishlov berish qulfini bo'shatish."""
+        await self._redis.delete(f"processing:{user_id}")

@@ -1,11 +1,11 @@
 """
-database.py — SQLite bilan aloqaning texnik asosi: engine,
+database.py — PostgreSQL bilan aloqaning texnik asosi: engine,
 session factory, va ORM modellari (jadval ta'riflari).
 
 MUHIM QOIDA: bu fayldagi klasslarda (ConversationModel va h.k.)
 HECH QANDAY METOD YO'Q — faqat ustunlar. Biznes qoidasi (escalate,
 assign_admin va h.k.) faqat domain/entities.py'dagi Conversation'da.
-Bu ikkalasini repo fayllari (sqlite_conversation_repo.py) bir-biriga
+Bu ikkalasini repo fayllari (postgres_conversation_repo.py) bir-biriga
 tarjima qiladi.
 """
 
@@ -88,21 +88,6 @@ class LeadModel(Base):
     last_updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
-class RateLimitModel(Base):
-    __tablename__ = "rate_limits"
-
-    user_id: Mapped[UUID] = mapped_column(primary_key=True)
-    message_count: Mapped[int] = mapped_column(default=0)
-    last_reset: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    # Burst detection: track recent message timestamps (JSON array)
-    recent_timestamps: Mapped[str] = mapped_column(Text, default="[]")
-    # Violation tracking for progressive penalties
-    violation_count: Mapped[int] = mapped_column(default=0)
-    last_violation_time: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-
-
 class AdminNotificationModel(Base):
     """Admin guruhiga yuborilgan bot xabari → foydalanuvchi IDsi xaritalash.
 
@@ -135,7 +120,7 @@ def create_engine(settings: Settings) -> AsyncEngine:
 
     # For self-hosted PostgreSQL (Oracle Cloud VM), no SSL required
     # For external PostgreSQL (Supabase, etc.), use SSL
-    use_ssl = not settings.environment.value == "local"
+    use_ssl = getattr(settings, 'database_use_ssl', False)
 
     connect_args = {"timeout": 10}  # Reduced timeout for faster failure detection
     if use_ssl:
@@ -143,8 +128,8 @@ def create_engine(settings: Settings) -> AsyncEngine:
 
     return create_async_engine(
         db_url,
-        pool_size=20,
-        max_overflow=10,
+        pool_size=5,  # Reduced from 20 for current scale (5K users/month)
+        max_overflow=3,  # Reduced from 10 for current scale
         pool_pre_ping=True,
         pool_recycle=3600,
         echo=settings.environment.value == "local",

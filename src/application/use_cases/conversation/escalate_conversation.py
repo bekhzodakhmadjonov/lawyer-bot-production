@@ -14,8 +14,8 @@ from domain.entities import Conversation, Lead, Message, User
 from domain.exceptions import ConversationNotFoundError
 from domain.value_objects import EscalationTarget, LeadScore, MessageSender
 from infrastructure.notifications.telegram_admin_notifier import TelegramAdminNotifier
-from infrastructure.persistence.sqlite_conversation_repo import SQLiteConversationRepo
-from infrastructure.persistence.sqlite_lead_repo import SQLiteLeadRepo
+from infrastructure.persistence.postgres_conversation_repo import PostgresConversationRepo
+from infrastructure.persistence.postgres_lead_repo import PostgresLeadRepo
 
 # Bazadan o'qiladigan xabarlar: tozalangandan keyin 4 ta qolishi uchun zaxira bilan
 _TRANSCRIPT_FETCH = 8
@@ -62,9 +62,9 @@ class EscalateConversationUseCase:
 
     def __init__(
         self,
-        conversation_repo: SQLiteConversationRepo,
+        conversation_repo: PostgresConversationRepo,
         notifier: TelegramAdminNotifier,
-        lead_repo: SQLiteLeadRepo,
+        lead_repo: PostgresLeadRepo,
     ) -> None:
         self._conversation_repo = conversation_repo
         self._notifier = notifier

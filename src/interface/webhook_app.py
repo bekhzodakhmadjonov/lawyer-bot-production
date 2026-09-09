@@ -36,14 +36,13 @@ from config.container import Container
 from config.settings import Settings
 from infrastructure.notifications.telegram_admin_notifier import TelegramAdminNotifier
 from infrastructure.persistence.database import create_engine, create_session_factory
-from infrastructure.persistence.sqlite_conversation_repo import SQLiteConversationRepo
-from infrastructure.persistence.sqlite_lead_repo import SQLiteLeadRepo
-from infrastructure.persistence.sqlite_notification_registry import (
-    SQLiteNotificationRegistry,
+from infrastructure.persistence.postgres_conversation_repo import PostgresConversationRepo
+from infrastructure.persistence.postgres_lead_repo import PostgresLeadRepo
+from infrastructure.persistence.postgres_notification_registry import (
+    PostgresNotificationRegistry,
 )
 from infrastructure.persistence.redis_rate_limiter import RedisRateLimiter
-from infrastructure.persistence.sqlite_rate_limiter import SQLiteRateLimiter
-from infrastructure.persistence.sqlite_user_repo import SQLiteUserRepo
+from infrastructure.persistence.postgres_user_repo import PostgresUserRepo
 from infrastructure.telegram.aiogram_bot import create_bot, create_dispatcher
 
 logger = structlog.get_logger()
@@ -146,18 +145,14 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     # Per-request dependency'lar uchun factory — handler'lar shu orqali oladi
     async def _build_request_deps(session: AsyncSession) -> dict:
         """Har bir xabar uchun yangi session-scoped dependency'lar."""
-        conversation_repo = SQLiteConversationRepo(session)
-        lead_repo = SQLiteLeadRepo(session)
-        user_repo = SQLiteUserRepo(session)
-        notification_registry = SQLiteNotificationRegistry(session)
+        conversation_repo = PostgresConversationRepo(session)
+        lead_repo = PostgresLeadRepo(session)
+        user_repo = PostgresUserRepo(session)
+        notification_registry = PostgresNotificationRegistry(session)
 
-        # Use Redis rate limiter if available, otherwise fallback to SQLite
-        try:
-            redis_client = await container.redis_client
-            rate_limiter = RedisRateLimiter(redis_client)
-        except Exception:
-            # Fallback to SQLite if Redis is not available
-            rate_limiter = SQLiteRateLimiter(session)
+        # Use Redis rate limiter (required for V2)
+        redis_client = await container.redis_client()
+        rate_limiter = RedisRateLimiter(redis_client)
 
         # Notifier per-request: session-aware registry bilan yaratiladi
         per_request_notifier = TelegramAdminNotifier(
@@ -265,14 +260,14 @@ async def webhook_handler(
     async with session_factory() as session:
         try:
             request_deps = await build_request_deps(session)
-            # Add user_repo to workflow_data for callback handlers
-            dp.workflow_data["user_repo"] = request_deps["user_repo"]
+            # Pass deps through feed_update kwargs, NOT through shared dp.workflow_data
             await dp.feed_update(bot=bot, update=update, **request_deps)
             await session.commit()
         except Exception:
             await session.rollback()
-            logger.exception("Error processing update")
-            raise
+            logger.exception("Error processing update", update_id=update.update_id)
+            # Always return 200 to Telegram to prevent retry storms
+            # The error is logged and we move on
 
     return {"ok": True}
 
@@ -319,7 +314,7 @@ async def health_check(
     try:
         import time
         start_time = time.time()
-        redis_client = await request.app.state.container.redis_client
+        redis_client = await request.app.state.container.redis_client()
         await redis_client.client.ping()
         redis_latency_ms = int((time.time() - start_time) * 1000)
     except Exception as exc:
@@ -346,7 +341,7 @@ async def health_check(
             "status": "ok" if redis_healthy else "error",
             "latency_ms": redis_latency_ms,
         },
-        "timestamp": __import__("datetime").datetime.utcnow().isoformat(),
+        "timestamp": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
     }
 
 

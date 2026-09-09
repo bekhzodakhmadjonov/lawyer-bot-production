@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import func, select
@@ -11,12 +11,12 @@ from domain.value_objects import LeadScore, LeadStatus
 from infrastructure.persistence.database import LeadModel
 
 
-class SQLiteLeadRepo:
+class PostgresLeadRepo:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
     async def save(self, lead: Lead) -> None:
-        lead.last_updated_at = datetime.now()
+        lead.last_updated_at = datetime.now(UTC)
         await self._session.merge(self._to_model(lead))
         await self._session.flush()
 
@@ -41,6 +41,7 @@ class SQLiteLeadRepo:
         stmt = (
             select(LeadModel)
             .where(LeadModel.status.not_in(closed_statuses))
+            .where(LeadModel.status != "deleted")
             .order_by(LeadModel.created_at.desc())
             .limit(limit)
         )
@@ -59,7 +60,7 @@ class SQLiteLeadRepo:
 
     async def count_all(self) -> int:
         result = await self._session.execute(
-            select(func.count()).select_from(LeadModel)
+            select(func.count()).select_from(LeadModel).where(LeadModel.status != "deleted")
         )
         return int(result.scalar_one())
 
@@ -113,6 +114,9 @@ class SQLiteLeadRepo:
                 # Try to match exact status value
                 stmt = stmt.where(LeadModel.status == status_filter)
 
+        if status_filter != "deleted":
+            stmt = stmt.where(LeadModel.status != "deleted")
+
         if sort_by_score:
             stmt = stmt.order_by(
                 LeadModel.score_value.desc(), LeadModel.created_at.desc()
@@ -147,6 +151,9 @@ class SQLiteLeadRepo:
                 stmt = stmt.where(LeadModel.status.in_(closed_statuses))
             else:
                 stmt = stmt.where(LeadModel.status == status_filter)
+
+        if status_filter != "deleted":
+            stmt = stmt.where(LeadModel.status != "deleted")
 
         result = await self._session.execute(stmt)
         return int(result.scalar_one())

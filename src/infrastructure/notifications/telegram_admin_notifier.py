@@ -4,6 +4,7 @@ TelegramAdminNotifier — NotifierPort'ning Telegram orqali amalga oshirilishi.
 
 from __future__ import annotations
 
+import html
 import re
 
 import structlog
@@ -13,9 +14,9 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from config.settings import Settings
 from domain.entities import Conversation, Lead, User
 from domain.value_objects import LeadStatus, MessageSender
-from infrastructure.persistence.sqlite_conversation_repo import SQLiteConversationRepo
-from infrastructure.persistence.sqlite_notification_registry import (
-    SQLiteNotificationRegistry,
+from infrastructure.persistence.postgres_conversation_repo import PostgresConversationRepo
+from infrastructure.persistence.postgres_notification_registry import (
+    PostgresNotificationRegistry,
 )
 from infrastructure.security.logging_utils import mask_message, mask_telegram_id
 
@@ -29,8 +30,8 @@ class TelegramAdminNotifier:
         self,
         bot: Bot,
         settings: Settings,
-        notification_registry: SQLiteNotificationRegistry,
-        conversation_repo: SQLiteConversationRepo,
+        notification_registry: PostgresNotificationRegistry,
+        conversation_repo: PostgresConversationRepo,
     ) -> None:
         self._bot = bot
         self._settings = settings
@@ -156,24 +157,24 @@ class TelegramAdminNotifier:
             elif msg.sender == MessageSender.AI:
                 sender_label = "🤖"
             elif msg.sender == MessageSender.ADMIN:
-                sender_label = "👨‍💼"
+                sender_label = "👨‍💼 Advokat"
             else:
                 sender_label = "🔧"
 
             # Format timestamp
             time_str = msg.sent_at.strftime("%H:%M")
 
+            # Strip all HTML tags from the message text so <b> doesn't show as literal text
+            clean_text = re.sub(r"<[^>]+>", "", msg.text)
+
             # Truncate message if too long
-            text = msg.text
-            if len(text) > 200:
-                text = text[:197] + "..."
+            if len(clean_text) > 200:
+                clean_text = clean_text[:197] + "..."
 
             # Escape HTML special characters to prevent parsing errors
-            text = text.replace("&", "&amp;")
-            text = text.replace("<", "&lt;")
-            text = text.replace(">", "&gt;")
+            clean_text = html.escape(clean_text)
 
-            lines.append(f"{sender_label} [{time_str}]: {text}")
+            lines.append(f"{sender_label} [{time_str}]: {clean_text}")
 
         # Join and truncate if still too long
         result = "\n".join(lines)
@@ -270,7 +271,7 @@ class TelegramAdminNotifier:
         )
 
         text = (
-            f"⭐ <b>Yangi Lead!</b>\n\n"
+            f"⭐ <b>Yangi mijoz!</b>\n\n"
             f"👤 <b>Kimdan:</b> {display_name}\n"
             f"👤 <b>Ism:</b> {actual_name}\n"
             f"📊 <b>Daraja:</b> {lead.score.value:.0%}\n"
@@ -364,9 +365,13 @@ class TelegramAdminNotifier:
     async def notify_returned_to_ai(
         self,
         conversation: Conversation,
+        user: User | None = None,
     ) -> None:
         """Foydalanuvchi AI ga qaytarilganini admin ga bildiradi."""
-        text = "🤖 <b>Foydalanuvchi AI yordamchiga qaytarildi</b>"
+        user_info = ""
+        if user:
+            user_info = f"\n👤 {self._display_name(user)}"
+        text = f"🤖 <b>Foydalanuvchi AI yordamchiga qaytarildi</b>{user_info}"
         await self._bot.send_message(
             chat_id=self._admin_chat_id,
             text=text,

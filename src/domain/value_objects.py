@@ -24,6 +24,7 @@ class ConversationStatus(str, Enum):
     """Suhbat hozir kim tomonidan boshqarilyapti."""
 
     AI_HANDLED = "ai_handled"
+    COLLECTING_INFO = "collecting_info"  # AI ma'lumot yig'moqda (savollar berayapti)
     ESCALATED_LEAD = "escalated_lead"  # yurist (lead admin) kutmoqda/javob bermoqda
     ESCALATED_GENERAL = "escalated_general"  # umumiy admin kutmoqda
     CLOSED = "closed"
@@ -44,6 +45,7 @@ class LeadStatus(str, Enum):
     PAID = "paid"
     LOST = "lost"
     CLOSED = "closed"
+    DELETED = "deleted"
 
 
 @dataclass(frozen=True, slots=True)

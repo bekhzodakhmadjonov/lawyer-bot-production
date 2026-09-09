@@ -2,7 +2,7 @@
 Settings — butun tizimning yagona konfiguratsiya manbai.
 
 Nega pydantic-settings: har bir sozlama TIPLANGAN va TEKSHIRILADI.
-Agar .env faylida OPENAI_API_KEY yozilishni unutilgan bo'lsa, ilova
+Agar .env faylida kerakli kalitlar yozilishi unutilgan bo'lsa, ilova
 production'da "kutilmagan joyda" xato bermaydi — u umuman ISHGA
 TUSHMAYDI, xatolik darhol, aniq xabar bilan chiqadi.
 """
@@ -34,6 +34,7 @@ class Settings(BaseSettings):
 
     # --- Database ---
     database_url: str = "postgresql+asyncpg://user:password@localhost/lawyer_bot"
+    database_use_ssl: bool = False
 
     # --- Redis ---
     redis_url: str = "redis://localhost:6379/0"
@@ -49,7 +50,9 @@ class Settings(BaseSettings):
     required_channel_id: int = 0
 
     # --- AI ---
-    openai_api_key: SecretStr = SecretStr("")
+    gemini_api_key: SecretStr = SecretStr("")
+    gemini_model: str = "gemini-3.6-flash"
+    gemini_enable_search: bool = False
 
     # --- Chat History ---
     chat_history_detail_limit: int = 15

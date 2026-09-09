@@ -1,9 +1,9 @@
 """
-SQLiteConversationRepo — ConversationRepoPort'ning SQLite orqali
+PostgresConversationRepo — ConversationRepoPort'ning PostgreSQL orqali
 amalga oshirilishi.
 
 Bu fayl ikkita dunyoni bog'laydi: domain (Conversation, Message —
-metodli, sof Python) va SQLite (ConversationModel, MessageModel —
+metodli, sof Python) va PostgreSQL (ConversationModel, MessageModel —
 faqat ustunlar). Tarjima har doim shu yerda, boshqa hech qayerda.
 """
 
@@ -31,7 +31,7 @@ class ConversationStats:
     conversations_since: int
 
 
-class SQLiteConversationRepo:
+class PostgresConversationRepo:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 

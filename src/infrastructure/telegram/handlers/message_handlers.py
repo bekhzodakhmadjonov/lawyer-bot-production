@@ -13,11 +13,12 @@ Dependency'lar dispatcher workflow_data orqali inject qilinadi
 
 from __future__ import annotations
 
+import html
 import re
 from datetime import UTC, datetime, timedelta
 from uuid import NAMESPACE_URL, UUID, uuid5
 
-from sqlalchemy.ext.asyncio import async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 import structlog
 from aiogram import Bot, F, Router, types
@@ -36,12 +37,12 @@ from domain.exceptions import (
 )
 from domain.value_objects import ConversationStatus, LeadStatus, MessageSender
 from infrastructure.notifications.telegram_admin_notifier import TelegramAdminNotifier
-from infrastructure.persistence.sqlite_conversation_repo import SQLiteConversationRepo
-from infrastructure.persistence.sqlite_lead_repo import SQLiteLeadRepo
-from infrastructure.persistence.sqlite_notification_registry import (
-    SQLiteNotificationRegistry,
+from infrastructure.persistence.postgres_conversation_repo import PostgresConversationRepo
+from infrastructure.persistence.postgres_lead_repo import PostgresLeadRepo
+from infrastructure.persistence.postgres_notification_registry import (
+    PostgresNotificationRegistry,
 )
-from infrastructure.persistence.sqlite_user_repo import SQLiteUserRepo
+from infrastructure.persistence.postgres_user_repo import PostgresUserRepo
 
 logger = structlog.get_logger()
 router = Router(name="main_router")
@@ -248,20 +249,23 @@ def _return_to_ai_keyboard() -> InlineKeyboardMarkup:
 
 
 def _greeting_message() -> str:
-    """Compact welcome text for subscribed users."""
+    """Engaging welcome message for subscribed users."""
     return (
-        "👋 <b>Assalomu alaykum!</b>\n\n"
-        "Men — <b>Advokat Jasurbek</b> jamoasining AI-yordamchisiman ⚖️\n"
-        "Vaziyatingizni qisqa aniqlab, zarur ma'lumotlarni yig'aman va kerak bo'lsa "
-        "pullik konsultatsiya uchun jamoaga yo'naltiraman.\n\n"
-        "💬 <b>Masalan, shunday yozishingiz mumkin:</b>\n"
-        "• Ishdan bo'shatishdi, hujjatlarim bor\n"
-        "• Aliment undirish bo'yicha advokat kerak\n"
-        "• Shartnoma bo'yicha nizo chiqdi\n"
-        "• Sud qaroridan norozi bo'ldim\n"
-        "• Biznesim uchun shartnoma tayyorlatmoqchiman\n\n"
-        "📌 <i>Vaziyatni 2-3 gapda yozing: nima bo'ldi, qachon bo'ldi, "
-        "qo'lingizda qanday hujjat bor.</i>\n\n"
+        "⚖️ <b>Advokat Jasurbek jamoasining AI Huquqiy Yordamchisi</b>\n\n"
+        "Assalomu alaykum! 👋\n\n"
+        "Siz huquqiy masalangiz bo‘yicha tezkor va tushunarli ma’lumot olishingiz mumkin.\n\n"
+        "🤖 <b>Men sizga:</b>\n"
+        "• huquqiy savollaringizga javob beraman;\n"
+        "• vaziyatingiz bo‘yicha tegishli qonun va tartiblarni tushuntiraman;\n"
+        "• keyingi qadamlar bo‘yicha yo‘nalish beraman;\n"
+        "• agar masalangizda advokat yordami kerak bo‘lsa, sizni Advokat Jasurbek jamoasiga bog‘lashga yordam beraman.\n\n"
+        "💬 <b>Savolingizni oddiy tilda yozing.</b>\n\n"
+        "<b>Masalan:</b>\n"
+        "▫️ <i>“Ish beruvchim meni ogohlantirmasdan ishdan bo‘shatdi. Nima qilishim mumkin?”</i>\n\n"
+        "▫️ <i>“2 nafar farzandim uchun aliment qancha bo‘ladi?”</i>\n\n"
+        "▫️ <i>“Menga shartnoma bo‘yicha da’vo kelgan, nima qilishim kerak?”</i>\n\n"
+        "▫️ <i>“Merosni qanday rasmiylashtirish mumkin?”</i>\n\n"
+        "📌 <i>Vaziyatingizni imkon qadar aniq yozing: nima bo‘ldi, qachon bo‘ldi va qanday hujjatlar mavjud.</i>\n\n"
         "👇 <b>Savolingizni yozing:</b>"
     )
 
@@ -269,30 +273,30 @@ def _greeting_message() -> str:
 def _subscription_required_message() -> str:
     """Welcome text shown before channel subscription."""
     return (
-        "👋 <b>Assalomu alaykum!</b>\n\n"
-        "Men — <b>Advokat Jasurbek</b> jamoasining AI-yordamchisiman ⚖️\n"
-        "Bot orqali vaziyatingizni qisqa bayon qilib, zarur bo'lsa advokat "
-        "jamoasi bilan pullik konsultatsiyaga yo'nalishingiz mumkin.\n\n"
-        "📢 <b>Davom etish uchun kanalga a'zo bo'ling.</b>\n"
-        "Kanalda foydali huquqiy maslahatlar, qonunchilik yangiliklari va "
-        "amaliy tavsiyalar berib boriladi.\n\n"
-        "A'zo bo'lgach, <b>✅ Qo'shildim</b> tugmasini bosing."
+        "⚖️ <b>Huquqiy yordamchidan foydalanishni boshlang</b>\n\n"
+        "Assalomu alaykum! 👋\n\n"
+        "Bu — <b>Advokat Jasurbek</b> jamoasining AI Huquqiy Yordamchisi.\n\n"
+        "🤖 <b>Bu yerda siz:</b>\n"
+        "• huquqiy savollaringizga javob olishingiz;\n"
+        "• qonun va huquqiy tartiblarni tushunishingiz;\n"
+        "• vaziyatingiz bo‘yicha keyingi qadamlarni aniqlashingiz;\n"
+        "• zarur bo‘lsa, advokat jamoasi bilan bog‘lanishingiz mumkin.\n\n"
+        "📢 <b>Botdan foydalanishni davom ettirish uchun kanalimizga a’zo bo‘ling.</b>\n\n"
+        "Kanalimizda huquqiy maslahatlar, qonunchilikdagi yangiliklar va amaliy tavsiyalar berib boriladi.\n\n"
+        "👇 A’zo bo‘ling va <b>“✅ Qo‘shildim”</b> tugmasini bosing."
     )
 
 
 def _subscription_confirmed_message() -> str:
     """Message shown after the channel membership check succeeds."""
     return (
-        "✅ <b>A'zolik tasdiqlandi!</b>\n\n"
-        "Endi vaziyatingizni yuborishingiz mumkin. Men kerakli ma'lumotlarni "
-        "aniqlab, mos bo'lsa Jasurbek advokat jamoasiga yo'naltiraman.\n\n"
-        "💬 <b>Namuna savollar:</b>\n"
-        "• Ish beruvchim oylik bermayapti, hujjatlarim bor\n"
-        "• Ajrashish va aliment bo'yicha advokat kerak\n"
-        "• Qarz bo'yicha tilxat bor, Toshkentdaman\n"
-        "• Soliq tekshiruvi keldi, muddat qisqa\n"
-        "• Apellyatsiya bo'yicha konsultatsiya kerak\n\n"
-        "📌 <i>Savolda faktlarni aniq yozing: sana, joy, hujjat, muddat.</i>\n\n"
+        "✅ <b>A’zolik tasdiqlandi!</b>\n\n"
+        "Endi huquqiy savolingizni yozishingiz mumkin.\n\n"
+        "🤖 Men vaziyatingizni tahlil qilib, imkon qadar tushunarli javob beraman.\n\n"
+        "📌 <b>Yaxshiroq javob olish uchun:</b>\n"
+        "<i>Nima bo‘ldi? → Qachon bo‘ldi? → Qanday hujjatlaringiz bor?</i>\n\n"
+        "<b>Masalan:</b>\n"
+        "<i>“Ish beruvchim meni 3 kun oldin ishdan bo‘shatdi. Hech qanday ogohlantirish berilmagan. Menda mehnat shartnomasi bor.”</i>\n\n"
         "👇 <b>Savolingizni yozing:</b>"
     )
 
@@ -313,12 +317,9 @@ def _lead_status_label(status: LeadStatus) -> str:
         LeadStatus.PAID: "To'langan",
         LeadStatus.LOST: "Yo'qolgan",
         LeadStatus.CLOSED: "Yopilgan",
+        LeadStatus.DELETED: "O'chirilgan",
     }
     return labels[status]
-
-
-def _should_close_conversation_for_lead_status(status: LeadStatus) -> bool:
-    return status in {LeadStatus.PAID, LeadStatus.LOST, LeadStatus.CLOSED}
 
 
 def _lead_score_label(score_value: float) -> str:
@@ -458,24 +459,24 @@ def _format_chat_history(messages: tuple, *, max_length: int = 4000) -> str:
         elif msg.sender == MessageSender.AI:
             sender_label = "🤖 AI"
         elif msg.sender == MessageSender.ADMIN:
-            sender_label = "👨‍💼 Mutaxassis"
+            sender_label = "👨‍💼 Advokat"
         else:
             sender_label = "🔧 Tizim"
 
         # Format timestamp
         time_str = msg.sent_at.strftime("%H:%M")
 
+        # Strip all HTML tags from the message text so <b> doesn't show as literal text
+        clean_text = re.sub(r"<[^>]+>", "", msg.text)
+
         # Truncate message if too long
-        text = msg.text
-        if len(text) > 300:
-            text = text[:297] + "..."
+        if len(clean_text) > 300:
+            clean_text = clean_text[:297] + "..."
 
         # Escape HTML special characters to prevent parsing errors
-        text = text.replace("&", "&amp;")
-        text = text.replace("<", "&lt;")
-        text = text.replace(">", "&gt;")
+        clean_text = html.escape(clean_text)
 
-        lines.append(f"{sender_label} [{time_str}]:\n{text}\n")
+        lines.append(f"{sender_label} [{time_str}]:\n{clean_text}\n")
 
     # Join and truncate if still too long
     result = "\n".join(lines)
@@ -504,7 +505,7 @@ def _leads_list_header(
 
 async def _render_leads_list(
     *,
-    lead_repo: SQLiteLeadRepo,
+    lead_repo: PostgresLeadRepo,
     page: int,
     status_filter: str | None,
     sort_by_score: bool,
@@ -554,8 +555,8 @@ async def _render_leads_list(
 async def cmd_start(
     message: types.Message,
     settings: Settings,
-    conversation_repo: SQLiteConversationRepo,
-    user_repo: SQLiteUserRepo,
+    conversation_repo: PostgresConversationRepo,
+    user_repo: PostgresUserRepo,
 ) -> None:
     """Yangi foydalanuvchini kutib olish va kanalga a'zo bo'lishni so'rash."""
     if message.from_user is None:
@@ -625,7 +626,7 @@ async def on_check_channel(callback: types.CallbackQuery, settings: Settings) ->
 async def on_return_to_ai(
     callback: types.CallbackQuery,
     settings: Settings,
-    conversation_repo: SQLiteConversationRepo,
+    conversation_repo: PostgresConversationRepo,
     notifier: TelegramAdminNotifier,
 ) -> None:
     """Foydalanuvchi 'AI ga qaytish' tugmasini bosganda."""
@@ -666,9 +667,9 @@ async def on_return_to_ai(
 async def on_toggle_history_callback(
     callback: types.CallbackQuery,
     settings: Settings,
-    conversation_repo: SQLiteConversationRepo,
-    lead_repo: SQLiteLeadRepo,
-    notification_registry: SQLiteNotificationRegistry,
+    conversation_repo: PostgresConversationRepo,
+    lead_repo: PostgresLeadRepo,
+    notification_registry: PostgresNotificationRegistry,
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     """Handle toggle history callback for all notification types."""
@@ -681,7 +682,7 @@ async def on_toggle_history_callback(
 
     # Create user_repo from session
     async with session_factory() as session:
-        user_repo = SQLiteUserRepo(session)
+        user_repo = PostgresUserRepo(session)
 
         parts = _validate_callback_data(callback.data, 3)
         if parts is None:
@@ -752,7 +753,12 @@ async def on_toggle_history_callback(
             )
 
             if notification_type is None:
-                await callback.answer("Xatolik yuz berdi", show_alert=True)
+                logger.warning(
+                    "Notification type not found in registry",
+                    message_id=callback.message.message_id,
+                    conversation_id=conversation_id_str,
+                )
+                await callback.answer("Xatolik yuz berdi. Iltimos, qayta urinib ko'ring.", show_alert=True)
                 return
 
             # Get conversation and user info from registry
@@ -968,9 +974,13 @@ async def on_toggle_history_callback(
                 await callback.answer("Noma'lum xabar turi", show_alert=True)
                 return
 
-            await callback.message.edit_text(
-                text, parse_mode="HTML", reply_markup=keyboard
-            )
+            try:
+                await callback.message.edit_text(
+                    text, parse_mode="HTML", reply_markup=keyboard
+                )
+            except TelegramBadRequest:
+                # Message content unchanged, skip edit
+                pass
             await callback.answer()
 
 
@@ -978,8 +988,8 @@ async def on_toggle_history_callback(
 async def on_lead_status_callback(
     callback: types.CallbackQuery,
     settings: Settings,
-    lead_repo: SQLiteLeadRepo,
-    conversation_repo: SQLiteConversationRepo,
+    lead_repo: PostgresLeadRepo,
+    conversation_repo: PostgresConversationRepo,
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     """Handle lead status button clicks."""
@@ -1033,17 +1043,6 @@ async def on_lead_status_callback(
         await callback.answer("Xatolik yuz berdi", show_alert=True)
         return
 
-    # Close conversation if status is PAID, LOST, or CLOSED
-    if _should_close_conversation_for_lead_status(new_status):
-        conversation = await conversation_repo.get(conversation_id)
-        if conversation:
-            conversation.close()
-            await conversation_repo.save(conversation)
-            logger.info(
-                "Conversation closed due to lead status",
-                conversation_id=conversation_id_str,
-            )
-
     # Re-render the message with updated status
     # Check if this is a lead detail view or escalation notification
     message_text = callback.message.text or ""
@@ -1053,7 +1052,7 @@ async def on_lead_status_callback(
         if match:
             lead_number = int(match.group(1))
             async with session_factory() as session:
-                user_repo = SQLiteUserRepo(session)
+                user_repo = PostgresUserRepo(session)
                 rendered = await _render_lead_detail(
                     lead_number=lead_number,
                     lead_repo=lead_repo,
@@ -1098,7 +1097,7 @@ async def on_lead_status_callback(
 
         # Get user entity for actual name
         async with session_factory() as session:
-            user_repo = SQLiteUserRepo(session)
+            user_repo = PostgresUserRepo(session)
             user_telegram_id = conversation.user_telegram_id
             user = (
                 await user_repo.get_by_telegram_id(user_telegram_id)
@@ -1183,7 +1182,7 @@ async def on_lead_status_callback(
 async def on_leads_page_callback(
     callback: types.CallbackQuery,
     settings: Settings,
-    lead_repo: SQLiteLeadRepo,
+    lead_repo: PostgresLeadRepo,
 ) -> None:
     """Pagination callback for leads list."""
     if callback.data is None or callback.message is None:
@@ -1247,7 +1246,7 @@ async def on_leads_page_callback(
 async def on_leads_filter_callback(
     callback: types.CallbackQuery,
     settings: Settings,
-    lead_repo: SQLiteLeadRepo,
+    lead_repo: PostgresLeadRepo,
 ) -> None:
     """Filter callback for leads list."""
     if callback.data is None or callback.message is None:
@@ -1301,7 +1300,7 @@ async def on_leads_filter_callback(
 async def on_leads_sort_callback(
     callback: types.CallbackQuery,
     settings: Settings,
-    lead_repo: SQLiteLeadRepo,
+    lead_repo: PostgresLeadRepo,
 ) -> None:
     """Sort callback for leads list."""
     if callback.data is None or callback.message is None:
@@ -1351,12 +1350,104 @@ async def on_leads_sort_callback(
     await callback.answer()
 
 
+def _extract_lead_fields(summary: str) -> dict[str, str]:
+    """Extract individual lead fields from the summary text."""
+    fields = {
+        "name": "Noma'lum",
+        "location": "Noma'lum",
+        "phone": "Noma'lum",
+        "category": "Noma'lum",
+        "urgency": "Noma'lum",
+        "documents": "Noma'lum",
+        "problem": "Noma'lum",
+    }
+
+    # Try to extract fields from the summary
+    # Pattern: "👤 Ism: value" or "Ism: value"
+    name_match = re.search(r"👤\s*Ism:\s*([^\n]+)", summary)
+    if name_match:
+        fields["name"] = name_match.group(1).strip()
+    else:
+        # Try alternative pattern
+        name_match = re.search(r"Ism:\s*([^\n]+)", summary)
+        if name_match:
+            fields["name"] = name_match.group(1).strip()
+
+    # Pattern: "📍 Hudud: value" or "Hudud: value"
+    location_match = re.search(r"📍\s*Hudud:\s*([^\n]+)", summary)
+    if location_match:
+        fields["location"] = location_match.group(1).strip()
+    else:
+        location_match = re.search(r"Hudud:\s*([^\n]+)", summary)
+        if location_match:
+            fields["location"] = location_match.group(1).strip()
+
+    # Pattern: "📞 Telefon: value" or "Telefon: value"
+    phone_match = re.search(r"📞\s*Telefon:\s*([^\n]+)", summary)
+    if phone_match:
+        fields["phone"] = phone_match.group(1).strip()
+    else:
+        phone_match = re.search(r"Telefon:\s*([^\n]+)", summary)
+        if phone_match:
+            fields["phone"] = phone_match.group(1).strip()
+
+    # Pattern: "⚖️ Sohasi: value" or "Sohasi: value"
+    category_match = re.search(r"⚖️\s*Sohasi:\s*([^\n]+)", summary)
+    if category_match:
+        fields["category"] = category_match.group(1).strip()
+    else:
+        category_match = re.search(r"Sohasi:\s*([^\n]+)", summary)
+        if category_match:
+            fields["category"] = category_match.group(1).strip()
+
+    # Pattern: "🔥 Muhimlik: value" or "Muhimlik: value"
+    urgency_match = re.search(r"🔥\s*Muhimlik:\s*([^\n]+)", summary)
+    if urgency_match:
+        fields["urgency"] = urgency_match.group(1).strip()
+    else:
+        urgency_match = re.search(r"Muhimlik:\s*([^\n]+)", summary)
+        if urgency_match:
+            fields["urgency"] = urgency_match.group(1).strip()
+
+    # Pattern: "📄 Hujjatlar: value" or "Hujjatlar: value"
+    documents_match = re.search(r"📄\s*Hujjatlar:\s*([^\n]+)", summary)
+    if documents_match:
+        fields["documents"] = documents_match.group(1).strip()
+    else:
+        documents_match = re.search(r"Hujjatlar:\s*([^\n]+)", summary)
+        if documents_match:
+            fields["documents"] = documents_match.group(1).strip()
+
+    # Pattern: "📝 Muammo: value" or "Muammo: value"
+    problem_match = re.search(r"📝\s*Muammo:\s*([^\n]+)", summary)
+    if problem_match:
+        fields["problem"] = problem_match.group(1).strip()
+    else:
+        problem_match = re.search(r"Muammo:\s*([^\n]+)", summary)
+        if problem_match:
+            fields["problem"] = problem_match.group(1).strip()
+
+    # Map urgency to Uzbek words if in English
+    raw_urgency = fields.get("urgency", "").lower().strip()
+    urgency_map = {
+        "high": "Yuqori 🔴",
+        "medium": "O'rtacha 🟡",
+        "low": "Oddiy 🟢",
+    }
+    for eng_val, uz_val in urgency_map.items():
+        if eng_val in raw_urgency:
+            fields["urgency"] = uz_val
+            break
+
+    return fields
+
+
 async def _render_lead_detail(
     *,
     lead_number: int,
-    lead_repo: SQLiteLeadRepo,
-    conversation_repo: SQLiteConversationRepo,
-    user_repo: SQLiteUserRepo,
+    lead_repo: PostgresLeadRepo,
+    conversation_repo: PostgresConversationRepo,
+    user_repo: PostgresUserRepo,
     bot: Bot,
     settings: Settings,
     show_history: bool = False,
@@ -1380,6 +1471,9 @@ async def _render_lead_detail(
     created_at = lead.created_at.strftime("%Y-%m-%d %H:%M")
     summary = re.sub(r"<[^>]+>", "", lead.topic_summary)
     contact = re.sub(r"<[^>]+>", "", lead.contact_info or "Aloqa noma'lum")
+
+    # Extract individual fields from summary
+    lead_fields = _extract_lead_fields(summary)
 
     conversation = await conversation_repo.get(lead.conversation_id)
 
@@ -1417,12 +1511,15 @@ async def _render_lead_detail(
     text = (
         f"📋 <b>Lead #{lead_number}</b>\n\n"
         f"👤 <b>Kimdan:</b> {display_name}\n"
-        f"� <b>Ism:</b> {actual_name}\n"
-        f"�� <b>Sana:</b> {created_at}\n"
-        f"📞 <b>Aloqa:</b> {contact}\n"
-        f"📝 <b>Ma'lumot:</b> {summary}\n\n"
+        f"👤 <b>Ism:</b> {actual_name}\n"
+        f"📅 <b>Sana:</b> {created_at}\n"
+        f"📍 <b>Hudud:</b> {lead_fields['location']}\n"
+        f"📞 <b>Telefon:</b> {lead_fields['phone']}\n"
+        f"🔥 <b>Muhimlik:</b> {lead_fields['urgency']}\n"
+        f"📄 <b>Hujjatlar:</b> {lead_fields['documents']}\n\n"
+        f"📝 <b>Muammo:</b> {lead_fields['problem']}\n\n"
         f"📊 <b>Hozirgi status:</b> {_lead_status_label(lead.status)}\n\n"
-        f"{chat_history}\n"
+        f"{chat_history}\n\n"
         f"💡 <b>Javob berish uchun:</b> Shu xabarga reply qilib yozing — "
         f"javobingiz foydalanuvchiga yuboriladi.\n\n"
         f"Statusni o'zgartirish uchun tugmalardan birini bosing:"
@@ -1455,6 +1552,10 @@ async def _render_lead_detail(
                 text="✅ Yopilgan",
                 callback_data=f"{prefix}{LeadStatus.CLOSED.value}",
             ),
+            InlineKeyboardButton(
+                text="🗑 O'chirish",
+                callback_data=f"{prefix}{LeadStatus.DELETED.value}",
+            ),
         ],
     ]
 
@@ -1484,9 +1585,9 @@ async def _render_lead_detail(
 async def on_lead_detail_callback(
     callback: types.CallbackQuery,
     settings: Settings,
-    lead_repo: SQLiteLeadRepo,
-    conversation_repo: SQLiteConversationRepo,
-    notification_registry: SQLiteNotificationRegistry,
+    lead_repo: PostgresLeadRepo,
+    conversation_repo: PostgresConversationRepo,
+    notification_registry: PostgresNotificationRegistry,
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     """Show detailed lead information when button is clicked (legacy)."""
@@ -1512,7 +1613,7 @@ async def on_lead_detail_callback(
         return
 
     async with session_factory() as session:
-        user_repo = SQLiteUserRepo(session)
+        user_repo = PostgresUserRepo(session)
         rendered = await _render_lead_detail(
             lead_number=lead_number,
             lead_repo=lead_repo,
@@ -1570,15 +1671,29 @@ async def on_lead_detail_callback(
 
 @router.message(Command("help"), F.chat.type == "private")
 async def cmd_help(message: types.Message) -> None:
-    """/help komandasi."""
+    """/help komandasi — foydalanuvchiga botdan foydalanish bo'yicha to'liq qo'llanma."""
+    text = (
+        "⚖️ <b>Advokat Jasurbek jamoasi — AI Huquqiy Yordamchi</b>\n\n"
+        "Ushbu bot fuqarolarga huquqiy masalalarda tezkor tushuntirish berish va "
+        "zarur hollarda professional advokatga bog'lash uchun mo'ljallangan.\n\n"
+        "📖 <b>Botdan foydalanish tartibi:</b>\n\n"
+        "1️⃣ <b>Savolingizni yozing:</b>\n"
+        "Vaziyatingizni batafsil yozing: nima bo‘ldi, qachon bo‘ldi va qo‘lingizda qanday hujjatlar mavjud.\n\n"
+        "2️⃣ <b>Dastlabki huquqiy tahlil:</b>\n"
+        "AI yordamchi O‘zbekiston Respublikasi qonunchiligi asosida vaziyatingizni tahlil qilib, "
+        "tegishli moddalar va tartiblarni tushuntiradi.\n\n"
+        "3️⃣ <b>Advokatga yo‘naltirish:</b>\n"
+        "Agar ishingiz sud, da’vo arizasi yozish yoki shaxsiy himoyani talab qilsa, "
+        "ma’lumotlaringiz <b>Advokat Jasurbek</b> jamoasiga yetkaziladi.\n\n"
+        "🔘 <b>Buyruqlar:</b>\n"
+        "• /start — Suhbatni yangidan boshlash\n"
+        "• /help — Bot bo‘yicha qo‘llanma\n\n"
+        "🔒 <b>Xavfsizlik eslatmasi:</b>\n"
+        "<i>Bank kartasi parollari yoki maxfiy shaxsiy ma’lumotlarni yubormang.</i>\n\n"
+        "👇 <b>Savolingiz bo‘lsa, to‘g‘ridan-to‘g‘ri yozib yuborishingiz mumkin!</b>"
+    )
     await message.answer(
-        "ℹ️ <b>Bot xizmati haqida:</b>\n\n"
-        "Ushbu bot vaziyatingizni tez tushunish, kerakli ma'lumotlarni yig'ish va professional yuridik yordamga yo'naltirish uchun ishlab chiqilgan.\n\n"
-        "⚖️ <b>Imkoniyatlar:</b>\n"
-        "• Muammo turi, hudud, muddat va hujjatlarni aniqlash\n"
-        "• Pullik konsultatsiyaga mos murojaatlarni advokat jamoasiga yuborish\n"
-        "• Murakkab masalalarda <b>Advokat Jasurbek</b> bilan to'g'ridan-to'g'ri bog'lash\n\n"
-        "💬 <i>Vaziyatingizni 2-3 gapda yozing. Maxfiy pasport yoki karta ma'lumotlarini yubormang.</i>",
+        text,
         parse_mode="HTML",
         disable_web_page_preview=True,
     )
@@ -1588,9 +1703,9 @@ async def cmd_help(message: types.Message) -> None:
 async def cmd_admin_stats(
     message: types.Message,
     settings: Settings,
-    conversation_repo: SQLiteConversationRepo,
-    lead_repo: SQLiteLeadRepo,
-    user_repo: SQLiteUserRepo,
+    conversation_repo: PostgresConversationRepo,
+    lead_repo: PostgresLeadRepo,
+    user_repo: PostgresUserRepo,
 ) -> None:
     """Admin guruhida qisqa operational statistikani ko'rsatida."""
     if message.chat.id != settings.telegram_lead_chat_id:
@@ -1640,9 +1755,9 @@ async def cmd_admin_stats(
 async def cmd_admin_leads(
     message: types.Message,
     settings: Settings,
-    lead_repo: SQLiteLeadRepo,
-    conversation_repo: SQLiteConversationRepo,
-    notification_registry: SQLiteNotificationRegistry,
+    lead_repo: PostgresLeadRepo,
+    conversation_repo: PostgresConversationRepo,
+    notification_registry: PostgresNotificationRegistry,
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     """Admin guruhida leadlar ro'yxatini pagination bilan ko'rsatida
@@ -1660,7 +1775,7 @@ async def cmd_admin_leads(
 
         if lead_number is not None:
             async with session_factory() as session:
-                user_repo = SQLiteUserRepo(session)
+                user_repo = PostgresUserRepo(session)
                 rendered = await _render_lead_detail(
                     lead_number=lead_number,
                     lead_repo=lead_repo,
@@ -1722,7 +1837,7 @@ async def cmd_admin_leads(
 async def cmd_admin_users(
     message: types.Message,
     settings: Settings,
-    user_repo: SQLiteUserRepo,
+    user_repo: PostgresUserRepo,
 ) -> None:
     """Admin guruhida bot foydalanuvchilari ro'yxatini ko'rsatida."""
     if message.chat.id != settings.telegram_lead_chat_id:
@@ -1768,8 +1883,8 @@ async def cmd_admin_close_conversation(
     message: types.Message,
     settings: Settings,
     notifier: TelegramAdminNotifier,
-    conversation_repo: SQLiteConversationRepo,
-    lead_repo: SQLiteLeadRepo,
+    conversation_repo: PostgresConversationRepo,
+    lead_repo: PostgresLeadRepo,
 ) -> None:
     """Admin bot notification'iga reply qilib suhbatni yopadi."""
     if message.chat.id != settings.telegram_lead_chat_id:
@@ -1806,7 +1921,7 @@ async def cmd_admin_close_conversation(
 async def cmd_admin_history(
     message: types.Message,
     settings: Settings,
-    conversation_repo: SQLiteConversationRepo,
+    conversation_repo: PostgresConversationRepo,
 ) -> None:
     """Admin guruhida suhbat tarixini ko'rsatadi (/history {conversation_id})."""
     if message.chat.id != settings.telegram_lead_chat_id:
@@ -1867,8 +1982,8 @@ async def cmd_admin_history(
 async def on_user_message(
     message: types.Message,
     handle_message: HandledUserMessageUseCase,
-    conversation_repo: SQLiteConversationRepo,
-    user_repo: SQLiteUserRepo,
+    conversation_repo: PostgresConversationRepo,
+    user_repo: PostgresUserRepo,
     settings: Settings,
 ) -> None:
     """Har qanday oddiy matn xabarini qayta ishlash (asosiy pipeline)."""
@@ -1894,56 +2009,67 @@ async def on_user_message(
     # Foydalanuvchini saqlash
     await user_repo.save(user)
 
-    # Foydalanuvchiga "yozmoqda..." ko'rsatish (LLM javobini kutayotganda)
-    await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
-
-    try:
-        reply_text = await handle_message.execute(user=user, message_text=message.text)
-    except RateLimitExceededError as exc:
-        # Use custom message if provided (for burst/violation penalties)
-        if exc.message:
-            reply_text = exc.message
-        elif exc.reset_at is not None:
-            from datetime import timezone
-
-            tashkent = timezone(timedelta(hours=5))
-            reset_local = exc.reset_at.astimezone(tashkent).strftime("%H:%M")
-            reply_text = (
-                f"⏳ <b>So'rovlar limiti oshib ketdi.</b>\n\n"
-                f"Soatiga 60 ta xabar yuborish mumkin.\n"
-                f"Limit <b>{reset_local}</b> da yangilanadi."
-            )
-        else:
-            reply_text = (
-                "⏳ <b>So'rovlar limiti oshib ketdi.</b>\n\n"
-                "Soatiga 60 ta xabar yuborish mumkin. Keyinroq qayta urinib ko'ring."
-            )
-    except ChannelMembershipRequiredError:
+    # Concurrent message lock - prevent multiple messages being processed simultaneously
+    rate_limiter = handle_message._rate_limiter
+    lock_acquired = await rate_limiter.acquire_processing_lock(user.id)
+    if not lock_acquired:
         await message.answer(
-            "📢 <b>Botdan to'liq foydalanish uchun rasmiy kanalimizga a'zo bo'ling:</b>",
-            reply_markup=_channel_join_keyboard(settings.required_channel_username),
-            parse_mode="HTML",
+            "⏳ Avvalgi xabaringizga javob tayyorlanmoqda, iltimos kuting..."
         )
         return
-    except Exception:
-        logger.exception("Unexpected error in on_user_message")
-        reply_text = (
-            "⚠️ <b>Texnik xatolik yuz berdi.</b>\n\n"
-            "Kechirasiz, so'rovingizni qayta ishlashda uzilish bo'ldi. Iltimos, birozdan so'ng qayta urinib ko'ring."
-        )
 
-    # Eskalatsiya holatida "AI ga qaytish" tugmasini ko'rsatish
-    user_id = _stable_user_id(message.from_user.id)
-    conversation = await conversation_repo.get_active_for_user(user_id)
+    try:
+        # Foydalanuvchiga "yozmoqda..." ko'rsatish (LLM javobini kutayotganda)
+        await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
 
-    if conversation and _is_escalated(conversation.status):
-        await _safe_answer(
-            message,
-            reply_text,
-            reply_markup=_return_to_ai_keyboard(),
-        )
-    else:
-        await _safe_answer(message, reply_text)
+        try:
+            reply_text = await handle_message.execute(user=user, message_text=message.text)
+        except RateLimitExceededError as exc:
+            # Use custom message if provided (for burst/violation penalties)
+            if exc.message:
+                reply_text = exc.message
+            elif exc.reset_at is not None:
+                from datetime import timezone
+
+                tashkent = timezone(timedelta(hours=5))
+                reset_local = exc.reset_at.astimezone(tashkent).strftime("%H:%M")
+                reply_text = (
+                    f"⏳ <b>So'rovlar limiti oshib ketdi.</b>\n\n"
+                    f"Soatiga 60 ta xabar yuborish mumkin.\n"
+                    f"Limit <b>{reset_local}</b> da yangilanadi."
+                )
+            else:
+                reply_text = (
+                    "⏳ <b>So'rovlar limiti oshib ketdi.</b>\n\n"
+                    "Soatiga 60 ta xabar yuborish mumkin. Keyinroq qayta urinib ko'ring."
+                )
+        except ChannelMembershipRequiredError:
+            await message.answer(
+                "📢 <b>Botdan to'liq foydalanish uchun rasmiy kanalimizga a'zo bo'ling:</b>",
+                reply_markup=_channel_join_keyboard(settings.required_channel_username),
+                parse_mode="HTML",
+            )
+            return
+        except Exception:
+            logger.exception("Unexpected error in on_user_message")
+            reply_text = (
+                "⚠️ <b>Texnik xatolik yuz berdi.</b>\n\n"
+                "Kechirasiz, so'rovingizni qayta ishlashda uzilish bo'ldi. Iltimos, birozdan so'ng qayta urinib ko'ring."
+            )
+
+        # Show "AI ga qaytish" button if conversation is in escalated state
+        # Detect from the reply text pattern to avoid extra DB query
+        is_escalated_reply = "mutaxassisga yuborildi" in reply_text or "AI yordamchiga qaytarildi" in reply_text
+        if is_escalated_reply:
+            await _safe_answer(
+                message,
+                reply_text,
+                reply_markup=_return_to_ai_keyboard(),
+            )
+        else:
+            await _safe_answer(message, reply_text)
+    finally:
+        await rate_limiter.release_processing_lock(user.id)
 
 
 # ────────────────────── Admin reply handler ──────────────────────
@@ -1953,7 +2079,7 @@ async def on_user_message(
 async def on_admin_reply_to_notification(
     message: types.Message,
     notifier: TelegramAdminNotifier,
-    conversation_repo: SQLiteConversationRepo,
+    conversation_repo: PostgresConversationRepo,
 ) -> None:
     """Admin bot xabariga reply qilganda foydalanuvchiga javob yuboradi.
 
@@ -2000,16 +2126,28 @@ async def on_admin_reply_to_notification(
             reply_text=message.text,
         )
 
-        # Suhbatni eskalatsiya holatiga qaytarish (har doim)
+        # Admin javobini suhbat tarixiga saqlash
         user_uuid = _stable_user_id(user_telegram_id)
         conversation = await conversation_repo.get_active_for_user(user_uuid)
         if conversation:
+            from domain.entities import Message as DomainMessage
             from domain.value_objects import EscalationTarget
 
-            conversation.escalate(EscalationTarget.LEAD)
-            await conversation_repo.save(conversation)
+            # Save admin message to conversation history
+            admin_msg = DomainMessage.new(
+                conversation_id=conversation.id,
+                sender=MessageSender.ADMIN,
+                text=message.text,
+            )
+            await conversation_repo.add_message(admin_msg)
+
+            # Keep conversation in escalated state
+            if not _is_escalated(conversation.status):
+                conversation.escalate(EscalationTarget.LEAD)
+                await conversation_repo.save(conversation)
+
             logger.info(
-                "Conversation escalated after admin reply",
+                "Admin reply saved and sent",
                 user_id=user_telegram_id,
                 conversation_id=conversation.id,
             )
@@ -2020,4 +2158,4 @@ async def on_admin_reply_to_notification(
         )
     except Exception as exc:
         logger.exception("Error sending admin reply")
-        await message.reply(f"❌ Xatolik: {exc}")
+        await message.reply("❌ Xabar yuborishda xatolik yuz berdi. Qayta urinib ko'ring.")

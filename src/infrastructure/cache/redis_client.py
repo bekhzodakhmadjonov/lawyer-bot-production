@@ -26,7 +26,7 @@ class RedisClient:
                 self.settings.redis_url,
                 encoding="utf-8",
                 decode_responses=True,
-                max_connections=20,
+                max_connections=10,  # Reduced from 20 for current scale
                 socket_connect_timeout=5,
                 socket_timeout=5,
             )
@@ -53,11 +53,13 @@ class RedisClient:
         key: str,
         value: str,
         ttl: int | timedelta | None = None,
+        ex: int | timedelta | None = None,
     ) -> bool:
         """Set value in cache with optional TTL."""
-        if ttl is None:
+        expire = ttl if ttl is not None else ex
+        if expire is None:
             return await self.client.set(key, value)
-        return await self.client.setex(key, ttl, value)
+        return await self.client.setex(key, expire, value)
 
     async def delete(self, key: str) -> int:
         """Delete key from cache."""

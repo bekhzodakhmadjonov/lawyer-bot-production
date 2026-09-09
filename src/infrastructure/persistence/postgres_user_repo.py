@@ -1,7 +1,7 @@
 """
-SQLiteUserRepo — User entity'ni SQLite orqali saqlash.
+PostgresUserRepo — User entity'ni PostgreSQL orqali saqlash.
 
-Bu fayl domain User entity'si bilan SQLite UserModel o'rtasida
+Bu fayl domain User entity'si bilan PostgreSQL UserModel o'rtasida
 tarjima qiladi.
 """
 
@@ -16,7 +16,7 @@ from domain.entities import User
 from infrastructure.persistence.database import UserModel
 
 
-class SQLiteUserRepo:
+class PostgresUserRepo:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 

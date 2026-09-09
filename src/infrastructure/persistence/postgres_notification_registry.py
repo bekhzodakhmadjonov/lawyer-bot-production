@@ -1,6 +1,6 @@
 """
-SQLiteNotificationRegistry — Admin xabar IDsi va foydalanuvchi IDsini
-persistent ravishda SQLite'da saqlash.
+PostgresNotificationRegistry — Admin xabar IDsi va foydalanuvchi IDsini
+persistent ravishda PostgreSQL'da saqlash.
 
 Bu modul TelegramAdminNotifier'ning in-memory registrini almashtiradi.
 Konteyner qayta ishga tushganda ham eski admin xabarlariga reply ishlaydi.
@@ -18,7 +18,7 @@ from infrastructure.persistence.database import AdminNotificationModel
 logger = structlog.get_logger()
 
 
-class SQLiteNotificationRegistry:
+class PostgresNotificationRegistry:
     """Admin xabarlari registrining SQLite implementatsiyasi."""
 
     def __init__(self, session: AsyncSession) -> None:
