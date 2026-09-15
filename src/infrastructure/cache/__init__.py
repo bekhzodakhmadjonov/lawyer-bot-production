@@ -3,4 +3,4 @@
 from .redis_client import RedisClient, close_redis_client, get_redis_client
 from .response_cache import ResponseCache
 
-__all__ = ["RedisClient", "close_redis_client", "get_redis_client", "ResponseCache"]
+__all__ = ["RedisClient", "ResponseCache", "close_redis_client", "get_redis_client"]

@@ -110,6 +110,8 @@ class PostgresLeadRepo:
                     LeadStatus.CLOSED.value,
                 )
                 stmt = stmt.where(LeadModel.status.in_(closed_statuses))
+            elif status_filter == "yuqori":
+                stmt = stmt.where(LeadModel.score_value >= 0.7)
             else:
                 # Try to match exact status value
                 stmt = stmt.where(LeadModel.status == status_filter)
@@ -149,6 +151,8 @@ class PostgresLeadRepo:
                     LeadStatus.CLOSED.value,
                 )
                 stmt = stmt.where(LeadModel.status.in_(closed_statuses))
+            elif status_filter == "yuqori":
+                stmt = stmt.where(LeadModel.score_value >= 0.7)
             else:
                 stmt = stmt.where(LeadModel.status == status_filter)
 

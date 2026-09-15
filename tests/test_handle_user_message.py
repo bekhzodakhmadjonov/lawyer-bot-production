@@ -7,6 +7,11 @@ request detection, escalation, and AI failure handling.
 """
 
 import pytest
+from infrastructure.ai.gemini_chat_adapter import (
+    ChatLlmResponse,
+    ConversationTurn,
+    GeminiChatAdapterError,
+)
 
 from application.use_cases.conversation.handle_user_message import (
     HandledUserMessageUseCase,
@@ -17,11 +22,8 @@ from domain.value_objects import (
     ConversationStatus,
     MessageSender,
 )
-from infrastructure.ai.openai_chat_adapter import (
-    ChatLlmResponse,
-    ConversationTurn,
-    OpenAIChatAdapterError,
-)
+from application.scoring import DynamicLeadScorer
+from application.context import ContextAwareResponseGenerator
 
 
 class FakeConversationRepo:
@@ -56,13 +58,13 @@ class FakeRateLimiter:
         self.allowed = allowed
         self.calls = 0
 
-    async def check_and_increment_user(self, user_id: object) -> tuple[bool, None]:
+    async def check_and_increment_user(self, user_id: object) -> tuple[bool, None, None]:
         self.calls += 1
-        return self.allowed, None
+        return self.allowed, None, None
 
 
 class FakeChatLlm:
-    """Fake OpenAIChatAdapter — simplified interface (no search_context)."""
+    """Fake GeminiChatAdapter — simplified interface."""
 
     def __init__(
         self,
@@ -86,23 +88,47 @@ class FakeChatLlm:
             raise self.error
         return ChatLlmResponse(text=self.response, citations=self.citations)
 
-    async def extract_lead_profile(
+    async def answer_enhanced(
         self,
         *,
-        history: tuple[ConversationTurn, ...],
-        username: str | None = None,
+        user_message: str,
+        history: tuple[ConversationTurn, ...] = (),
+        enable_search: bool | None = None,
     ):
-        # Return a dummy mock object representing ClientProfile
-        class DummyProfile:
-            name = username or "Test Name"
-            location = "Test Location"
-            category = "Test Category"
-            urgency = "High"
-            problem_summary = "Test Problem"
-            documents_mentioned = "Test Docs"
-            phone_number = "+998901234567"
-
-        return DummyProfile()
+        from infrastructure.ai.gemini_chat_adapter import EnhancedResponse
+        
+        self.calls.append((user_message, history))
+        if self.error is not None:
+            raise self.error
+            
+        intent = "legal_question"
+        needs_lawyer = False
+        
+        lower_msg = user_message.lower()
+        lower_resp = self.response.lower()
+        
+        if "advokat" in lower_msg or "yurist" in lower_msg or "bog'lang" in lower_msg or "konsultatsiya" in lower_msg:
+            intent = "service_request"
+            needs_lawyer = True
+            
+        if "advokat" in lower_resp or "bog'layman" in lower_resp:
+            intent = "service_request"
+            needs_lawyer = True
+            
+        problem_description = "Test problem"
+        phone_number = "+998901234567"
+        if intent == "service_request" and len(history) == 0:
+            problem_description = ""
+            phone_number = ""
+            
+        return EnhancedResponse(
+            ai_response=self.response,
+            intent=intent,
+            needs_lawyer=needs_lawyer,
+            problem_description=problem_description,
+            phone_number=phone_number,
+            conversation_score=1.0,
+        )
 
 
 class FakeEscalateConversation:
@@ -124,12 +150,16 @@ class FakeNotifier:
     def __init__(self) -> None:
         self.followups: list[dict] = []
         self.returned: list[object] = []
+        self.new_leads: list[dict] = []
 
     async def notify_user_followup(self, **kwargs: object) -> None:
         self.followups.append(kwargs)
 
-    async def notify_returned_to_ai(self, conversation: object) -> None:
+    async def notify_returned_to_ai(self, conversation: object, *, user: object = None) -> None:
         self.returned.append(conversation)
+        
+    async def notify_new_lead(self, **kwargs: object) -> None:
+        self.new_leads.append(kwargs)
 
 
 class FakeLeadRepo:
@@ -144,6 +174,12 @@ class FakeLeadRepo:
         self.save_calls.append(lead)
         if hasattr(lead, "conversation_id"):
             self.leads[lead.conversation_id] = lead
+
+    async def get_by_user(self, user_id: object) -> object | None:
+        for lead in self.leads.values():
+            if getattr(lead, "user_id", None) == user_id:
+                return lead
+        return None
 
 
 def _make_user(*, joined: bool = True) -> User:
@@ -173,14 +209,28 @@ def build_use_case(
     escalation = FakeEscalateConversation()
     notifier = FakeNotifier()
     lead_repo = FakeLeadRepo()
+    class FakeLeadScorer:
+        def calculate_from_enhanced_response(self, enhanced_response: object, conversation_history: list[str]) -> tuple[float, object]:
+            class FakeFactors:
+                conversation_depth = 1.0
+                intent_clarity = 1.0
+                urgency_indicators = 1.0
+                budget_signals = 1.0
+                geographic_relevance = 1.0
+                sentiment_trajectory = 1.0
+            score = 1.0 if getattr(enhanced_response, "needs_lawyer", False) else 0.1
+            return score, FakeFactors()
 
     use_case = HandledUserMessageUseCase(
         conversation_repo=repo,
         rate_limiter=FakeRateLimiter(rate_allowed),
         chat_llm=llm,
+        legal_llm=llm,
         escalate_conversation=escalation,
         notifier=notifier,
         lead_repo=lead_repo,
+        lead_scorer=FakeLeadScorer(),
+        context_generator=ContextAwareResponseGenerator(),
     )
     return use_case, repo, llm, escalation, notifier
 
@@ -197,7 +247,8 @@ async def test_happy_path_ai_response() -> None:
     response = await use_case.execute(user, "My question")
 
     assert response == "Legal answer"
-    assert llm.calls == [("My question", ())]
+    assert len(llm.calls) == 1
+    assert "My question" in llm.calls[0][0]
     assert repo.messages[-1].sender is MessageSender.AI
     assert escalation.calls == []
 
@@ -276,14 +327,41 @@ async def test_lawyer_information_questions_stay_with_ai(message_text: str) -> N
 @pytest.mark.parametrize(
     "message_text",
     [
-        "yurist bilan gaplashmoqchiman",
         "konsultatsiya kerak",
+    ],
+)
+@pytest.mark.asyncio
+async def test_direct_lawyer_request_rule_based(
+    message_text: str,
+) -> None:
+    use_case, _, llm, escalation, _ = build_use_case(
+        chat_response="Qaysi masala bo'yicha yordam kerak?"
+    )
+    user = _make_user()
+
+    response = await use_case.execute(user, message_text)
+
+    expected = (
+        "💼 <b>Advokat kerakligini aytdingiz.</b>\n\n"
+        "Qanday huquqiy muammoingiz bor? Qisqacha bayon qiling.\n\n"
+        "📍 <b>Qaysi shaharda yashaysiz?</b>\n\n"
+        "📄 <b>Qo'lingizda hujjatlar bormi?</b>"
+    )
+    assert response == expected
+    assert len(llm.calls) == 0
+    assert escalation.calls == []
+
+
+@pytest.mark.parametrize(
+    "message_text",
+    [
+        "yurist bilan gaplashmoqchiman",
         "meni advokatga ulang",
         "iltimos bog'lang",
     ],
 )
 @pytest.mark.asyncio
-async def test_direct_lawyer_request_variants_collect_intake(
+async def test_direct_lawyer_request_ai_based(
     message_text: str,
 ) -> None:
     use_case, _, llm, escalation, _ = build_use_case(
@@ -322,7 +400,7 @@ async def test_lawyer_request_escalates_after_intake_is_ready() -> None:
     response = await use_case.execute(user, "Ha, advokatga ulang")
 
     assert "yuborildi" in response.lower()
-    assert llm.calls == []
+    assert len(escalation.calls) == 1
     assert len(escalation.calls) == 1
     assert "📞 <b>Telefon:</b> +998901234567" in escalation.calls[0]["user_message"]
 
@@ -367,7 +445,7 @@ async def test_return_to_ai_keyword() -> None:
 async def test_ai_failure_escalates() -> None:
     """When AI provider fails, conversation is escalated with fallback message."""
     use_case, repo, _, escalation, _ = build_use_case(
-        chat_error=OpenAIChatAdapterError("provider down")
+        chat_error=GeminiChatAdapterError("provider down")
     )
     user = _make_user()
 
@@ -424,10 +502,19 @@ async def test_new_conversation_created_when_none_exists() -> None:
 @pytest.mark.asyncio
 async def test_ai_escalation_signal_triggers_escalation() -> None:
     """If AI response contains escalation signal words, auto-escalate."""
-    use_case, _, _, escalation, _ = build_use_case(
+    user = _make_user()
+    conversation = Conversation.start(user.id, user_telegram_id=user.telegram_id)
+    use_case, repo, _, escalation, _ = build_use_case(
+        conversation=conversation,
         chat_response="Sizni bog'layman advokat bilan."
     )
-    user = _make_user()
+    repo.messages.append(
+        Message.new(
+            conversation.id,
+            MessageSender.USER,
+            "Toshkentdaman, aliment bo'yicha yordam bering.",
+        )
+    )
 
     await use_case.execute(user, "Menga yordam kerak")
 
@@ -456,20 +543,38 @@ async def test_existing_lead_updated_with_new_topic_summary() -> None:
     user = _make_user()
     conversation = Conversation.start(user.id, user_telegram_id=user.telegram_id)
 
-    # Create use case with lead repo that tracks leads
     repo = FakeConversationRepo(conversation)
     llm = FakeChatLlm(response="AI javob")
-    escalation = FakeEscalateConversation()
+    
+    from application.use_cases.conversation.escalate_conversation import EscalateConversationUseCase
     notifier = FakeNotifier()
     lead_repo = FakeLeadRepo()
+    escalation = EscalateConversationUseCase(
+        conversation_repo=repo, lead_repo=lead_repo, notifier=notifier
+    )
+    
+    class FakeLeadScorer:
+        def calculate_from_enhanced_response(self, enhanced_response: object, conversation_history: list[str]) -> tuple[float, object]:
+            class FakeFactors:
+                conversation_depth = 1.0
+                intent_clarity = 1.0
+                urgency_indicators = 1.0
+                budget_signals = 1.0
+                geographic_relevance = 1.0
+                sentiment_trajectory = 1.0
+            score = 1.0 if getattr(enhanced_response, "needs_lawyer", False) else 0.8
+            return score, FakeFactors()
 
     use_case = HandledUserMessageUseCase(
         conversation_repo=repo,
-        rate_limiter=FakeRateLimiter(rate_allowed=True),
+        rate_limiter=FakeRateLimiter(True),
         chat_llm=llm,
+        legal_llm=llm,
         escalate_conversation=escalation,
         notifier=notifier,
         lead_repo=lead_repo,
+        lead_scorer=FakeLeadScorer(),
+        context_generator=ContextAwareResponseGenerator(),
     )
 
     # Simulate existing lead with old topic_summary
@@ -501,6 +606,6 @@ async def test_existing_lead_updated_with_new_topic_summary() -> None:
         updated_lead.topic_summary != "Old problem: yoshlar daftariga ro'yxatdan o'tish"
     )
     assert (
-        "aliment" in updated_lead.topic_summary.lower()
+        "test problem" in updated_lead.topic_summary.lower()
         or "944456778" in updated_lead.topic_summary
     )

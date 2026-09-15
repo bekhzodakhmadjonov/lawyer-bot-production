@@ -18,13 +18,12 @@ import re
 from datetime import UTC, datetime, timedelta
 from uuid import NAMESPACE_URL, UUID, uuid5
 
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-
 import structlog
 from aiogram import Bot, F, Router, types
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.filters import Command, CommandStart
+from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from application.use_cases.conversation.handle_user_message import (
     HandledUserMessageUseCase,
@@ -37,7 +36,9 @@ from domain.exceptions import (
 )
 from domain.value_objects import ConversationStatus, LeadStatus, MessageSender
 from infrastructure.notifications.telegram_admin_notifier import TelegramAdminNotifier
-from infrastructure.persistence.postgres_conversation_repo import PostgresConversationRepo
+from infrastructure.persistence.postgres_conversation_repo import (
+    PostgresConversationRepo,
+)
 from infrastructure.persistence.postgres_lead_repo import PostgresLeadRepo
 from infrastructure.persistence.postgres_notification_registry import (
     PostgresNotificationRegistry,
@@ -81,34 +82,73 @@ def _mask_message(text: str) -> str:
 # ────────────────────── Yordamchi funksiyalar ──────────────────────
 
 
+TELEGRAM_MAX_LENGTH = 4000  # Leave buffer from Telegram's 4096 limit
+
+
+def _split_long_text(text: str, max_len: int = TELEGRAM_MAX_LENGTH) -> list[str]:
+    """Uzun matnni Telegram limitiga mos bo'laklarga ajratadi."""
+    if len(text) <= max_len:
+        return [text]
+
+    chunks: list[str] = []
+    while text:
+        if len(text) <= max_len:
+            chunks.append(text)
+            break
+        # Try to split at paragraph boundary
+        split_at = text.rfind("\n\n", 0, max_len)
+        if split_at == -1:
+            # Try line boundary
+            split_at = text.rfind("\n", 0, max_len)
+        if split_at == -1:
+            # Force split at max length
+            split_at = max_len
+        chunks.append(text[:split_at].rstrip())
+        text = text[split_at:].lstrip()
+    return chunks
+
+
 async def _safe_answer(
     message: types.Message,
     text: str,
     **kwargs,
 ) -> None:
     """HTML bilan xabar yuboradi; HTML xato bo'lsa teg'siz qayta yuboradi.
-
-    GPT javobi Telegram HTML'ni qabul qilmagan holda (masalan, yopilmagan
-    teg) TelegramBadRequest xatoligi kelib chiqadi. Bu holda teglarni olib
-    tashlab oddiy matn sifatida yuboramiz, foydalanuvchi hech bo'lmaganda
-    javobni ko'radi.
+    Uzun xabarlarni avtomatik bo'laklarga ajratib yuboradi.
+    reply_markup faqat oxirgi bo'lakga qo'shiladi.
     """
-    try:
-        await message.answer(text, parse_mode="HTML", **kwargs)
-    except TelegramBadRequest as exc:
-        exc_str = str(exc).lower()
-        if "can't parse entities" in exc_str or "parse entities" in exc_str:
-            plain = re.sub(r"<[^>]+>", "", text).strip()
-            if not plain:
-                plain = "⚠️ Javob tayyorlandi, lekin formatlashda xatolik bo'ldi."
-            logger.warning(
-                "HTML parse error — sending as plain text",
-                error=str(exc),
-                text_preview=text[:200],  # diagnoz uchun
-            )
-            await message.answer(plain, parse_mode=None, **kwargs)
-        else:
-            raise
+    chunks = _split_long_text(text)
+    total = len(chunks)
+    for i, chunk in enumerate(chunks):
+        # reply_markup faqat oxirgi bo'lakda bo'lsin
+        chunk_kwargs = dict(kwargs)
+        if i < total - 1:
+            chunk_kwargs.pop("reply_markup", None)
+        try:
+            await message.answer(chunk, parse_mode="HTML", **chunk_kwargs)
+        except TelegramBadRequest as exc:
+            exc_str = str(exc).lower()
+            if "can't parse entities" in exc_str or "parse entities" in exc_str:
+                plain = re.sub(r"<[^>]+>", "", chunk).strip()
+                if not plain:
+                    plain = "\u26a0\ufe0f Javob tayyorlandi, lekin formatlashda xatolik bo'ldi."
+                logger.warning(
+                    "HTML parse error \u2014 sending as plain text",
+                    error=str(exc),
+                    text_preview=chunk[:200],
+                )
+                await message.answer(plain, parse_mode=None, **chunk_kwargs)
+            elif "message is too long" in exc_str:
+                # Emergency split if a single chunk is still too long
+                logger.warning("Message still too long after split, force-splitting")
+                sub_chunks = _split_long_text(chunk, max_len=2000)
+                for j, sub in enumerate(sub_chunks):
+                    sub_kwargs = dict(kwargs)
+                    if i < total - 1 or j < len(sub_chunks) - 1:
+                        sub_kwargs.pop("reply_markup", None)
+                    await message.answer(sub, parse_mode=None, **sub_kwargs)
+            else:
+                raise
 
 
 async def _safe_edit_message(
@@ -198,7 +238,7 @@ def _validate_page_number(page_str: str) -> int | None:
 
 def _validate_filter_value(filter_str: str) -> str | None:
     """Validate filter value against allowed values."""
-    allowed_filters = {"all", "ochiq", "yangi", "yopiq"}
+    allowed_filters = {"all", "ochiq", "yangi", "yopiq", "yuqori"}
     if filter_str in allowed_filters:
         return filter_str
     return None
@@ -332,39 +372,176 @@ def _lead_score_label(score_value: float) -> str:
         return "💡 Past"
 
 
+
+def _format_date(dt: datetime) -> str:
+    """Sana formatini chiroyli ko'rsatish (masalan: 14-Sen)."""
+    uzbek_months = {
+        1: "Yan",
+        2: "Fev",
+        3: "Mar",
+        4: "Apr",
+        5: "May",
+        6: "Iyun",
+        7: "Iyul",
+        8: "Avg",
+        9: "Sen",
+        10: "Okt",
+        11: "Noy",
+        12: "Dek",
+    }
+    return f"{dt.day}-{uzbek_months.get(dt.month, str(dt.month))}"
+
+
+def _extract_lead_fields(summary: str) -> dict[str, str]:
+    """Extract individual lead fields from the summary text."""
+    fields = {
+        "name": "Noma'lum",
+        "location": "Noma'lum",
+        "phone": "Noma'lum",
+        "category": "Noma'lum",
+        "urgency": "Noma'lum",
+        "documents": "Noma'lum",
+        "problem": "Noma'lum",
+    }
+
+    # Strip ALL HTML tags from summary first so tags like <b> or </b> never leak into extracted values
+    clean_summary = re.sub(r"<[^>]+>", "", summary or "")
+
+    def _clean_val(val: str) -> str:
+        return re.sub(r"<[^>]+>", "", val).strip()
+
+    # Pattern: "👤 Ism: value" or "Ism: value"
+    name_match = re.search(r"👤?\s*Ism:\s*([^\n]+)", clean_summary)
+    if name_match:
+        fields["name"] = _clean_val(name_match.group(1))
+
+    # Pattern: "📍 Hudud: value" or "Hudud: value"
+    location_match = re.search(r"📍?\s*Hudud:\s*([^\n]+)", clean_summary)
+    if location_match:
+        fields["location"] = _clean_val(location_match.group(1))
+
+    # Pattern: "📞 Telefon: value" or "Telefon: value"
+    phone_match = re.search(r"📞?\s*Telefon:\s*([^\n]+)", clean_summary)
+    if phone_match:
+        fields["phone"] = _clean_val(phone_match.group(1))
+
+    # Pattern: "⚖️ Sohasi: value" or "Sohasi: value"
+    category_match = re.search(r"⚖️?\s*Sohasi:\s*([^\n]+)", clean_summary)
+    if category_match:
+        fields["category"] = _clean_val(category_match.group(1))
+
+    # Pattern: "🔥 Muhimlik: value" or "Muhimlik: value"
+    urgency_match = re.search(r"🔥?\s*Muhimlik:\s*([^\n]+)", clean_summary)
+    if urgency_match:
+        fields["urgency"] = _clean_val(urgency_match.group(1))
+
+    # Pattern: "📄 Hujjatlar: value" or "Hujjatlar: value"
+    documents_match = re.search(r"📄?\s*Hujjatlar:\s*([^\n]+)", clean_summary)
+    if documents_match:
+        fields["documents"] = _clean_val(documents_match.group(1))
+
+    # Pattern: "📝 Muammo: value" or "Muammo: value"
+    problem_match = re.search(r"📝?\s*Muammo:\s*([^\n]+)", clean_summary)
+    if problem_match:
+        fields["problem"] = _clean_val(problem_match.group(1))
+
+    # Map urgency to Uzbek words if in English
+    raw_urgency = fields.get("urgency", "").lower().strip()
+    urgency_map = {
+        "high": "Yuqori 🔴",
+        "medium": "O'rtacha 🟡",
+        "low": "Oddiy 🟢",
+    }
+    for eng_val, uz_val in urgency_map.items():
+        if eng_val in raw_urgency:
+            fields["urgency"] = uz_val
+            break
+
+    return fields
+
+
 def _format_lead_lines(leads: list, *, offset: int) -> list[str]:
-    """Bitta joyda leadlar ro'yxati matnini formatlaydi.
-
-    Har bir lead qatoridan keyin "Batafsil: /leads {index}" matni
-    qo'shiladi — bu <code> teg orqali Telegram'da bosib nusxalanadi,
-    tugma emas, oddiy matn sifatida.
-    """
+    """Leadlar ro'yxatini zamonaviy CRM karta ko'rinishida formatlaydi."""
     lines: list[str] = []
+    
+    number_emojis = ["0️⃣", "1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+    def get_number_emoji(num: int) -> str:
+        if num <= 10:
+            return number_emojis[num]
+        return f"{num}."
+
     for index, lead in enumerate(leads, start=offset + 1):
-        created_at = lead.created_at.strftime("%d %b %H:%M")
-        summary = lead.topic_summary
-        if len(summary) > 100:
-            summary = summary[:97] + "..."
-        contact = lead.contact_info or "Aloqa noma'lum"
-        if len(contact) > 30:
-            contact = contact[:27] + "..."
+        created_at = _format_date(lead.created_at)
+        summary_raw = lead.topic_summary or ""
 
-        # Remove HTML tags from summary and escape remaining special characters
-        summary = re.sub(r"<[^>]+>", "", summary)
-        summary = (
-            summary.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        )
-        contact = (
-            contact.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        )
+        # Extract structured fields using helper
+        fields = _extract_lead_fields(summary_raw)
 
-        lines.append(
-            f"<b>{index}. {_lead_status_label(lead.status)}</b> "
-            f"• {_lead_score_label(lead.score.value)}\n"
-            f"📅 {created_at} • 📞 {contact}\n"
-            f"📝 {summary}\n"
-            f"📖 Batafsil: <code>/leads {index}</code>\n\n"
+        # Extract clean legal problem description
+        problem = fields.get("problem")
+        if not problem or problem == "Noma'lum":
+            cleaned = re.sub(
+                r"(👤|📛|📞|📍|🔥|📄|⚖️)\s*[^:\n]+:\s*[^\n]+", "", summary_raw
+            )
+            problem = cleaned.strip() if cleaned.strip() else summary_raw
+
+        # Strip HTML tags and normalize spaces
+        problem = re.sub(r"<[^>]+>", "", problem)
+        problem = re.sub(r"\s+", " ", problem).strip()
+        if len(problem) > 90:
+            problem = problem[:87] + "..."
+        if not problem:
+            problem = "Huquqiy maslahat so'ralgan"
+
+        # Determine user header: Name (@username) or @username or Name
+        name = fields.get("name")
+        contact = (lead.contact_info or "").strip()
+        contact = re.sub(r"<[^>]+>", "", contact).strip()
+        if (
+            contact
+            and not contact.startswith("@")
+            and not contact.startswith("+")
+            and not contact.isdigit()
+        ):
+            contact = f"@{contact}"
+
+        if name and name != "Noma'lum":
+            clean_name = re.sub(r"<[^>]+>", "", name).strip()
+            if contact and contact != "Noma'lum" and contact != clean_name:
+                user_header = f"{clean_name} ({contact})"
+            else:
+                user_header = f"{clean_name}"
+        elif contact and contact != "Noma'lum":
+            user_header = f"{contact}"
+        else:
+            user_header = "Mijoz"
+
+        # Extract other fields cleanly
+        phone = fields.get("phone", "Noma'lum")
+        if phone != "Noma'lum":
+            phone = re.sub(r"<[^>]+>", "", phone).strip()
+
+        location = fields.get("location", "Noma'lum")
+        if location != "Noma'lum":
+            location = re.sub(r"<[^>]+>", "", location).strip()
+
+        star = " ⭐️" if lead.score.value >= 0.7 else ""
+        status_label = _lead_status_label(lead.status)
+        num_emoji = get_number_emoji(index)
+
+        card = (
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"{num_emoji} {user_header}{star}\n"
+            f"📁 Holat: {status_label} | 📅 {created_at}\n"
+            f"📞 Tel: {phone}\n"
+            f"📍 Manzil: {location}\n"
+            f"📝 Muammo: {problem}\n"
         )
+        lines.append(card)
+
+    if lines:
+        lines.append("━━━━━━━━━━━━━━━━━━━━\n")
+
     return lines
 
 
@@ -373,66 +550,80 @@ def _leads_list_keyboard(
     page: int,
     total_pages: int,
     status_filter: str | None,
-    sort_by_score: bool,
+    sort_by_score: bool = False,
+    leads_count: int = 0,
+    offset: int = 0,
 ) -> InlineKeyboardMarkup:
-    """Leadlar ro'yxati uchun navigatsiya/filtr/saralash klaviaturasi.
-
-    Endi har bir lead uchun alohida "Batafsil" tugmasi YO'Q — ular
-    matn ichidagi "/leads {index}" ko'rinishiga almashtirildi.
-    """
+    """Leadlar ro'yxati uchun navigatsiya, tezkor ochish va filtr klaviaturasi."""
     keyboard: list[list[InlineKeyboardButton]] = []
 
-    # Navigation row
-    nav_row: list[InlineKeyboardButton] = []
-    if page > 0:
-        nav_row.append(
-            InlineKeyboardButton(
-                text="◀ Oldingi",
-                callback_data=f"leads_page:{page - 1}:{status_filter or 'all'}:{sort_by_score}",
+    # 1. Tezkor ochish tugmalari (bitta bosishda xabarni almashtirib ochadi)
+    if leads_count > 0:
+        lead_btns: list[InlineKeyboardButton] = []
+        chunk_size = 2 if leads_count <= 4 else 5
+        for i in range(offset + 1, offset + leads_count + 1):
+            btn_text = f"🔍 #{i} Ochish" if leads_count <= 4 else f"🔍 #{i}"
+            lead_btns.append(
+                InlineKeyboardButton(
+                    text=btn_text,
+                    callback_data=f"lead_detail:{i}",
+                )
             )
-        )
-    nav_row.append(
-        InlineKeyboardButton(
-            text=f"{page + 1}/{total_pages}",
-            callback_data="leads_page:current",
-        )
-    )
-    if page < total_pages - 1:
-        nav_row.append(
-            InlineKeyboardButton(
-                text="Keyingi ▶",
-                callback_data=f"leads_page:{page + 1}:{status_filter or 'all'}:{sort_by_score}",
-            )
-        )
-    keyboard.append(nav_row)
+        for chunk in [lead_btns[i : i + chunk_size] for i in range(0, len(lead_btns), chunk_size)]:
+            keyboard.append(chunk)
 
-    # Filter buttons
-    filter_row = [
+    # 2. Navigatsiya qatori
+    if total_pages > 1:
+        nav_row: list[InlineKeyboardButton] = []
+        if page > 0:
+            nav_row.append(
+                InlineKeyboardButton(
+                    text="◀ Oldingi",
+                    callback_data=f"leads_page:{page - 1}:{status_filter or 'all'}:{sort_by_score}",
+                )
+            )
+        nav_row.append(
+            InlineKeyboardButton(
+                text=f"{page + 1}/{total_pages}",
+                callback_data="leads_page:current",
+            )
+        )
+        if page < total_pages - 1:
+            nav_row.append(
+                InlineKeyboardButton(
+                    text="Keyingi ▶",
+                    callback_data=f"leads_page:{page + 1}:{status_filter or 'all'}:{sort_by_score}",
+                )
+            )
+        keyboard.append(nav_row)
+
+    # 3. Status filtrlari (1-qator)
+    filter_row_1 = [
         InlineKeyboardButton(
-            text="Hammasi",
+            text="📋 Hammasi" if status_filter in (None, "all") else "Hammasi",
             callback_data=f"leads_filter:all:{page}:{sort_by_score}",
         ),
         InlineKeyboardButton(
-            text="Ochiq",
+            text="🟢 Ochiq" if status_filter == "ochiq" else "Ochiq",
             callback_data=f"leads_filter:ochiq:{page}:{sort_by_score}",
         ),
         InlineKeyboardButton(
-            text="Yangi",
+            text="🆕 Yangi" if status_filter == "yangi" else "Yangi",
             callback_data=f"leads_filter:yangi:{page}:{sort_by_score}",
         ),
     ]
-    keyboard.append(filter_row)
+    keyboard.append(filter_row_1)
 
-    # Sort button
-    sort_button_text = "⭐ Yuqori" if sort_by_score else "📅 Sana"
-    keyboard.append(
-        [
-            InlineKeyboardButton(
-                text=sort_button_text,
-                callback_data=f"leads_sort:{status_filter or 'all'}:{page}:{not sort_by_score}",
-            )
-        ]
-    )
+    # 4. Muhimlik filtri (2-qator, keng tugma - hech qachon kesilmaydi)
+    filter_row_2 = [
+        InlineKeyboardButton(
+            text="⭐️ Faqat Yuqori"
+            if status_filter == "yuqori"
+            else "⭐️ Yuqori",
+            callback_data=f"leads_filter:yuqori:{page}:{sort_by_score}",
+        ),
+    ]
+    keyboard.append(filter_row_2)
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
@@ -494,13 +685,21 @@ def _leads_list_header(
     total_pages: int,
     total_count: int,
 ) -> list[str]:
-    lines = ["📋 <b>Leadlar ro'yxati</b>"]
-    if status_filter:
-        lines.append(f"🔍 Filtr: {status_filter.capitalize()}")
-    if sort_by_score:
-        lines.append("⭐ Saralash: Yuqori ball")
-    lines.append(f"\n📊 Sahifa: {page + 1}/{total_pages} (Jami: {total_count})\n")
-    return lines
+    filter_labels = {
+        "ochiq": "🟢 Ochiq",
+        "yangi": "🆕 Yangi",
+        "yuqori": "⭐️ Yuqori",
+        "yopiq": "📁 Yopiq",
+    }
+    filter_desc = (
+        f" ({filter_labels.get(status_filter, status_filter)})"
+        if status_filter
+        else ""
+    )
+    return [
+        f"📋 <b>Leadlar ro'yxati</b>{filter_desc}",
+        f"📊 <b>Sahifa:</b> {page + 1}/{total_pages} (Jami: {total_count} ta)\n",
+    ]
 
 
 async def _render_leads_list(
@@ -543,6 +742,8 @@ async def _render_leads_list(
         total_pages=total_pages,
         status_filter=status_filter,
         sort_by_score=sort_by_score,
+        leads_count=len(leads),
+        offset=offset,
     )
 
     return "\n".join(lines), keyboard
@@ -708,7 +909,7 @@ async def on_toggle_history_callback(
             return
 
         # Try to find if this is a lead detail view by checking message content
-        message_text = callback.message.text or ""
+        message_text = callback.message.html_text or ""
         if "Lead #" in message_text:
             # This is a lead detail view - need to re-render with updated history
             # Extract lead number from message
@@ -812,7 +1013,7 @@ async def on_toggle_history_callback(
                     actual_name = _actual_name(user) if user else "Noma'lum"
 
                     text = (
-                        f"⭐ <b>Yangi Lead!</b>\n\n"
+                        f"⭐ <b>Yangi mijoz!</b>\n\n"
                         f"👤 <b>Kimdan:</b> {display_name}\n"
                         f"👤 <b>Ism:</b> {actual_name}\n"
                         f"📊 <b>Daraja:</b> {lead.score.value:.0%}\n"
@@ -862,7 +1063,7 @@ async def on_toggle_history_callback(
                 else:
                     # Fallback if lead not found
                     text = (
-                        f"⭐ <b>Yangi Lead!</b>\n\n"
+                        f"⭐ <b>Yangi mijoz!</b>\n\n"
                         f"👤 <b>Kimdan:</b> {display_name}\n"
                         f"{chat_history}\n"
                         f"💡 <b>Javob berish uchun:</b> Shu xabarga reply qilib yozing."
@@ -1350,96 +1551,6 @@ async def on_leads_sort_callback(
     await callback.answer()
 
 
-def _extract_lead_fields(summary: str) -> dict[str, str]:
-    """Extract individual lead fields from the summary text."""
-    fields = {
-        "name": "Noma'lum",
-        "location": "Noma'lum",
-        "phone": "Noma'lum",
-        "category": "Noma'lum",
-        "urgency": "Noma'lum",
-        "documents": "Noma'lum",
-        "problem": "Noma'lum",
-    }
-
-    # Try to extract fields from the summary
-    # Pattern: "👤 Ism: value" or "Ism: value"
-    name_match = re.search(r"👤\s*Ism:\s*([^\n]+)", summary)
-    if name_match:
-        fields["name"] = name_match.group(1).strip()
-    else:
-        # Try alternative pattern
-        name_match = re.search(r"Ism:\s*([^\n]+)", summary)
-        if name_match:
-            fields["name"] = name_match.group(1).strip()
-
-    # Pattern: "📍 Hudud: value" or "Hudud: value"
-    location_match = re.search(r"📍\s*Hudud:\s*([^\n]+)", summary)
-    if location_match:
-        fields["location"] = location_match.group(1).strip()
-    else:
-        location_match = re.search(r"Hudud:\s*([^\n]+)", summary)
-        if location_match:
-            fields["location"] = location_match.group(1).strip()
-
-    # Pattern: "📞 Telefon: value" or "Telefon: value"
-    phone_match = re.search(r"📞\s*Telefon:\s*([^\n]+)", summary)
-    if phone_match:
-        fields["phone"] = phone_match.group(1).strip()
-    else:
-        phone_match = re.search(r"Telefon:\s*([^\n]+)", summary)
-        if phone_match:
-            fields["phone"] = phone_match.group(1).strip()
-
-    # Pattern: "⚖️ Sohasi: value" or "Sohasi: value"
-    category_match = re.search(r"⚖️\s*Sohasi:\s*([^\n]+)", summary)
-    if category_match:
-        fields["category"] = category_match.group(1).strip()
-    else:
-        category_match = re.search(r"Sohasi:\s*([^\n]+)", summary)
-        if category_match:
-            fields["category"] = category_match.group(1).strip()
-
-    # Pattern: "🔥 Muhimlik: value" or "Muhimlik: value"
-    urgency_match = re.search(r"🔥\s*Muhimlik:\s*([^\n]+)", summary)
-    if urgency_match:
-        fields["urgency"] = urgency_match.group(1).strip()
-    else:
-        urgency_match = re.search(r"Muhimlik:\s*([^\n]+)", summary)
-        if urgency_match:
-            fields["urgency"] = urgency_match.group(1).strip()
-
-    # Pattern: "📄 Hujjatlar: value" or "Hujjatlar: value"
-    documents_match = re.search(r"📄\s*Hujjatlar:\s*([^\n]+)", summary)
-    if documents_match:
-        fields["documents"] = documents_match.group(1).strip()
-    else:
-        documents_match = re.search(r"Hujjatlar:\s*([^\n]+)", summary)
-        if documents_match:
-            fields["documents"] = documents_match.group(1).strip()
-
-    # Pattern: "📝 Muammo: value" or "Muammo: value"
-    problem_match = re.search(r"📝\s*Muammo:\s*([^\n]+)", summary)
-    if problem_match:
-        fields["problem"] = problem_match.group(1).strip()
-    else:
-        problem_match = re.search(r"Muammo:\s*([^\n]+)", summary)
-        if problem_match:
-            fields["problem"] = problem_match.group(1).strip()
-
-    # Map urgency to Uzbek words if in English
-    raw_urgency = fields.get("urgency", "").lower().strip()
-    urgency_map = {
-        "high": "Yuqori 🔴",
-        "medium": "O'rtacha 🟡",
-        "low": "Oddiy 🟢",
-    }
-    for eng_val, uz_val in urgency_map.items():
-        if eng_val in raw_urgency:
-            fields["urgency"] = uz_val
-            break
-
-    return fields
 
 
 async def _render_lead_detail(
@@ -1559,18 +1670,24 @@ async def _render_lead_detail(
         ],
     ]
 
-    # Add history toggle button
+    # Add history toggle button and back button
     toggle_text = "📖 Tarixni yashirish" if show_history else "📖 Tarixni ko'rsatish"
     toggle_state = "0" if show_history else "1"
+    bottom_row: list[InlineKeyboardButton] = []
     if conversation:
-        keyboard_rows.append(
-            [
-                InlineKeyboardButton(
-                    text=toggle_text,
-                    callback_data=f"toggle_history:{conversation.id}:{toggle_state}",
-                ),
-            ]
+        bottom_row.append(
+            InlineKeyboardButton(
+                text=toggle_text,
+                callback_data=f"toggle_history:{conversation.id}:{toggle_state}",
+            )
         )
+    bottom_row.append(
+        InlineKeyboardButton(
+            text="◀ Ro'yxat",
+            callback_data="leads_page:0:all:False",
+        )
+    )
+    keyboard_rows.append(bottom_row)
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
 
@@ -1751,7 +1868,10 @@ async def cmd_admin_stats(
     await message.reply(text, parse_mode="HTML")
 
 
-@router.message(Command("leads"), F.chat.type.in_({"group", "supergroup"}))
+@router.message(
+    Command("leads", re.compile(r"^leads(?:_(\d+))?$")),
+    F.chat.type.in_({"group", "supergroup"}),
+)
 async def cmd_admin_leads(
     message: types.Message,
     settings: Settings,
@@ -1759,61 +1879,76 @@ async def cmd_admin_leads(
     conversation_repo: PostgresConversationRepo,
     notification_registry: PostgresNotificationRegistry,
     session_factory: async_sessionmaker[AsyncSession],
+    command: CommandObject | None = None,
 ) -> None:
-    """Admin guruhida leadlar ro'yxatini pagination bilan ko'rsatida
-    yoki bitta leadni status bilan ko'rsatida (/leads {index})."""
+    """Admin guruhida leadlar ro'yxatini pagination bilan ko'rsatadi
+    yoki bitta leadni status bilan ko'rsatadi (/leads {index} yoki /leads_{index})."""
     if message.chat.id != settings.telegram_lead_chat_id:
         return
-    args = message.text.split()
 
-    # Check if argument is a number (lead number) -> show detail view
-    if len(args) > 1:
+    lead_number: int | None = None
+    status_filter: str | None = None
+
+    # Check /leads_1 or /leads 1 via CommandObject
+    if command and command.regexp_match and command.regexp_match.group(1):
         try:
-            lead_number = int(args[1])
+            lead_number = int(command.regexp_match.group(1))
         except ValueError:
             lead_number = None
+    elif command and command.args:
+        first_arg = command.args.split()[0]
+        if first_arg.isdigit():
+            lead_number = int(first_arg)
+        elif first_arg.lower() in ("ochiq", "yangi", "yopiq", "yuqori"):
+            status_filter = first_arg.lower()
+    else:
+        # Fallback text parsing
+        raw_text = (message.text or "").strip()
+        u_match = re.match(r"^/leads_(\d+)", raw_text)
+        if u_match:
+            lead_number = int(u_match.group(1))
+        else:
+            args = raw_text.split()
+            if len(args) > 1:
+                if args[1].isdigit():
+                    lead_number = int(args[1])
+                elif args[1].lower() in ("ochiq", "yangi", "yopiq", "yuqori"):
+                    status_filter = args[1].lower()
 
-        if lead_number is not None:
-            async with session_factory() as session:
-                user_repo = PostgresUserRepo(session)
-                rendered = await _render_lead_detail(
-                    lead_number=lead_number,
-                    lead_repo=lead_repo,
-                    conversation_repo=conversation_repo,
-                    user_repo=user_repo,
-                    bot=message.bot,
-                    settings=settings,
+    # Check if argument is a number (lead number) -> show detail view
+    if lead_number is not None:
+        async with session_factory() as session:
+            user_repo = PostgresUserRepo(session)
+            rendered = await _render_lead_detail(
+                lead_number=lead_number,
+                lead_repo=lead_repo,
+                conversation_repo=conversation_repo,
+                user_repo=user_repo,
+                bot=message.bot,
+                settings=settings,
+            )
+            if rendered is None:
+                await message.reply(
+                    "❌ <b>Lead topilmadi. Raqamni tekshiring.</b>",
+                    parse_mode="HTML",
                 )
-                if rendered is None:
-                    await message.reply(
-                        "❌ <b>Lead topilmadi. Raqamni tekshiring.</b>",
-                        parse_mode="HTML",
-                    )
-                    return
+                return
 
-                text, keyboard, user_telegram_id, display_name = rendered
-                sent = await message.reply(
-                    text, parse_mode="HTML", reply_markup=keyboard
+            text, keyboard, user_telegram_id, display_name = rendered
+            sent = await message.reply(
+                text, parse_mode="HTML", reply_markup=keyboard
+            )
+
+            if user_telegram_id:
+                await notification_registry.save(
+                    message_id=sent.message_id,
+                    user_telegram_id=user_telegram_id,
+                    display_name=display_name,
                 )
-
-                if user_telegram_id:
-                    await notification_registry.save(
-                        message_id=sent.message_id,
-                        user_telegram_id=user_telegram_id,
-                        display_name=display_name,
-                    )
-            return
+        return
 
     # Original list logic with filters
-    status_filter = None
     sort_by_score = False
-
-    if len(args) > 1:
-        filter_arg = args[1].lower()
-        if filter_arg in ("ochiq", "yangi", "yopiq"):
-            status_filter = filter_arg
-        elif filter_arg == "yuqori":
-            sort_by_score = True
 
     rendered = await _render_leads_list(
         lead_repo=lead_repo,
@@ -2156,6 +2291,6 @@ async def on_admin_reply_to_notification(
             f"✅ <b>Javob {display_name} ga yuborildi.</b>",
             parse_mode="HTML",
         )
-    except Exception as exc:
+    except Exception:
         logger.exception("Error sending admin reply")
         await message.reply("❌ Xabar yuborishda xatolik yuz berdi. Qayta urinib ko'ring.")

@@ -14,7 +14,9 @@ from domain.entities import Conversation, Lead, Message, User
 from domain.exceptions import ConversationNotFoundError
 from domain.value_objects import EscalationTarget, LeadScore, MessageSender
 from infrastructure.notifications.telegram_admin_notifier import TelegramAdminNotifier
-from infrastructure.persistence.postgres_conversation_repo import PostgresConversationRepo
+from infrastructure.persistence.postgres_conversation_repo import (
+    PostgresConversationRepo,
+)
 from infrastructure.persistence.postgres_lead_repo import PostgresLeadRepo
 
 # Bazadan o'qiladigan xabarlar: tozalangandan keyin 4 ta qolishi uchun zaxira bilan

@@ -10,17 +10,16 @@ Bu loyihaning markaziy biznes logikasidir (AI Pipeline):
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-
 import re
+from datetime import UTC, datetime
 
 import structlog
 
+from application.context import ContextAwareResponseGenerator
+from application.scoring import DynamicLeadScorer
 from application.use_cases.conversation.escalate_conversation import (
     EscalateConversationUseCase,
 )
-from application.scoring import DynamicLeadScorer
-from application.context import ContextAwareResponseGenerator
 from domain.entities import Conversation, Message, User
 from domain.exceptions import ChannelMembershipRequiredError, RateLimitExceededError
 from domain.value_objects import (
@@ -33,10 +32,12 @@ from infrastructure.ai.gemini_chat_adapter import (
     GeminiChatAdapter,
 )
 from infrastructure.notifications.telegram_admin_notifier import TelegramAdminNotifier
-from infrastructure.persistence.postgres_conversation_repo import PostgresConversationRepo
+from infrastructure.persistence.postgres_conversation_repo import (
+    PostgresConversationRepo,
+)
 from infrastructure.persistence.postgres_lead_repo import PostgresLeadRepo
 from infrastructure.persistence.redis_rate_limiter import RedisRateLimiter
-from infrastructure.security.logging_utils import mask_message, mask_telegram_id
+from infrastructure.security.logging_utils import mask_telegram_id
 
 logger = structlog.get_logger()
 

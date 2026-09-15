@@ -6,14 +6,14 @@ from typing import Self
 
 import httpx
 
+from application.context import ContextAwareResponseGenerator
+from application.scoring import DynamicLeadScorer
 from application.use_cases.conversation.escalate_conversation import (
     EscalateConversationUseCase,
 )
 from application.use_cases.conversation.handle_user_message import (
     HandledUserMessageUseCase,
 )
-from application.scoring import DynamicLeadScorer
-from application.context import ContextAwareResponseGenerator
 from config.settings import Settings
 from infrastructure.ai.gemini_chat_adapter import GeminiChatAdapter
 from infrastructure.cache import close_redis_client, get_redis_client

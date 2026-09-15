@@ -6,7 +6,6 @@ from infrastructure.telegram.handlers.message_handlers import (
     _greeting_message,
     _subscription_confirmed_message,
     _subscription_required_message,
-    cmd_admin_open_leads,
     cmd_admin_stats,
 )
 
@@ -51,6 +50,10 @@ class FakeLeadRepo:
 class FakeMessage:
     def __init__(self) -> None:
         self.replies: list[tuple[str, str | None]] = []
+        
+        class Chat:
+            id = 12345
+        self.chat = Chat()
 
     async def reply(self, text: str, parse_mode: str | None = None) -> None:
         self.replies.append((text, parse_mode))
@@ -60,9 +63,9 @@ def test_greeting_message_is_compact_and_actionable() -> None:
     text = _greeting_message()
 
     assert "Advokat Jasurbek" in text
-    assert "Namuna" not in text
-    assert "Ishdan bo'shatishdi" in text
-    assert "Aliment undirish" in text
+    assert "Masalan:" in text
+    assert "ishdan bo‘shatdi" in text
+    assert "aliment" in text
     assert "<b>" in text
     assert "**" not in text
 
@@ -71,10 +74,10 @@ def test_subscription_messages_include_clear_next_steps() -> None:
     required_text = _subscription_required_message()
     confirmed_text = _subscription_confirmed_message()
 
-    assert "kanalga a'zo bo'ling" in required_text
-    assert "Qo'shildim" in required_text
-    assert "Namuna savollar" in confirmed_text
-    assert "Apellyatsiya" in confirmed_text
+    assert "kanalimizga a’zo bo‘ling" in required_text
+    assert "Qo‘shildim" in required_text
+    assert "Masalan:" in confirmed_text
+    assert "ishdan bo‘shatdi" in confirmed_text
     assert "**" not in required_text
     assert "**" not in confirmed_text
 
@@ -82,9 +85,25 @@ def test_subscription_messages_include_clear_next_steps() -> None:
 def test_admin_stats_message_is_operational_and_html_safe() -> None:
     from asyncio import run
 
-    message = FakeMessage()
+    from config.settings import Settings
 
-    run(cmd_admin_stats(message, FakeConversationRepo(), FakeLeadRepo()))  # type: ignore[arg-type]
+    class FakeUserRepo:
+        async def count_all(self) -> int:
+            return 5
+            
+        async def count_new_today(self) -> int:
+            return 2
+            
+        async def count_since(self, since: object) -> int:
+            return 2
+            
+        async def count_by_status(self, has_joined: bool) -> int:
+            return 3 if has_joined else 2
+
+    message = FakeMessage()
+    settings = Settings(_env_file=None, telegram_lead_chat_id=message.chat.id if hasattr(message, 'chat') else 0)
+
+    run(cmd_admin_stats(message, settings, FakeConversationRepo(), FakeLeadRepo(), FakeUserRepo()))  # type: ignore[arg-type]
 
     text, parse_mode = message.replies[0]
     assert parse_mode == "HTML"
@@ -92,45 +111,10 @@ def test_admin_stats_message_is_operational_and_html_safe() -> None:
     assert "24 soat" in text
     assert "3 suhbat, 1 lead" in text
     assert "Belgilangan" in text
-    assert "Paid" in text
-    assert "Lead conversion" in text
+    assert "Yopilgan" in text
+    assert "Lead konversiyasi" in text
     assert "40%" in text
     assert "**" not in text
 
 
-def test_admin_open_leads_message_lists_pipeline_items() -> None:
-    from asyncio import run
-    from uuid import uuid4
 
-    lead = Lead(
-        id=uuid4(),
-        conversation_id=uuid4(),
-        user_id=uuid4(),
-        score=LeadScore(value=0.9),
-        topic_summary="Toshkentda qarz bo'yicha sud ertaga, tilxat bor.",
-        contact_info="+998901234567",
-        status=LeadStatus.BOOKED,
-        created_at=datetime(2026, 8, 31, 10, 0, tzinfo=UTC),
-    )
-    message = FakeMessage()
-
-    run(cmd_admin_open_leads(message, FakeLeadRepo((lead,))))  # type: ignore[arg-type]
-
-    text, parse_mode = message.replies[0]
-    assert parse_mode == "HTML"
-    assert "Ochiq leadlar" in text
-    assert "Konsultatsiya belgilandi" in text
-    assert "+998901234567" in text
-    assert "qarz" in text
-
-
-def test_admin_open_leads_message_handles_empty_queue() -> None:
-    from asyncio import run
-
-    message = FakeMessage()
-
-    run(cmd_admin_open_leads(message, FakeLeadRepo()))  # type: ignore[arg-type]
-
-    text, parse_mode = message.replies[0]
-    assert parse_mode == "HTML"
-    assert "Ochiq leadlar yo'q" in text

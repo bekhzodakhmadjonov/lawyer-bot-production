@@ -29,20 +29,22 @@ from aiogram.types import (
     Update,
 )
 from fastapi import FastAPI, Header, HTTPException, Request, status
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from config.container import Container
 from config.settings import Settings
 from infrastructure.notifications.telegram_admin_notifier import TelegramAdminNotifier
 from infrastructure.persistence.database import create_engine, create_session_factory
-from infrastructure.persistence.postgres_conversation_repo import PostgresConversationRepo
+from infrastructure.persistence.postgres_conversation_repo import (
+    PostgresConversationRepo,
+)
 from infrastructure.persistence.postgres_lead_repo import PostgresLeadRepo
 from infrastructure.persistence.postgres_notification_registry import (
     PostgresNotificationRegistry,
 )
-from infrastructure.persistence.redis_rate_limiter import RedisRateLimiter
 from infrastructure.persistence.postgres_user_repo import PostgresUserRepo
+from infrastructure.persistence.redis_rate_limiter import RedisRateLimiter
 from infrastructure.telegram.aiogram_bot import create_bot, create_dispatcher
 
 logger = structlog.get_logger()

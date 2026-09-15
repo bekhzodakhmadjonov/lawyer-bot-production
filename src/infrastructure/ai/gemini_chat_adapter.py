@@ -15,12 +15,6 @@ import structlog
 from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
-from tenacity import (
-    retry,
-    stop_after_attempt,
-    wait_exponential,
-    retry_if_exception_type,
-)
 
 logger = structlog.get_logger()
 
@@ -45,50 +39,50 @@ class GeminiChatAdapterError(RuntimeError):
 class EnhancedResponse(BaseModel):
     """Enhanced response with lead qualification data."""
 
-    ai_response: str = Field(description="The AI response to the user")
+    ai_response: str = Field(description="Foydalanuvchiga beriladigan javob matni (FAQAT o'zbek tilida)")
     intent: str = Field(
         default="informational_query",
-        description="User intent: informational_query, consultation, service_request",
+        description="Foydalanuvchi niyati: legal_question, service_request, greeting, yoki general",
     )
     sentiment: str = Field(
         default="neutral",
-        description="Sentiment: positive, neutral, negative, urgent",
+        description="Mijozning kayfiyati: positive, neutral, negative, urgent",
     )
     conversation_score: float = Field(
         default=0.0,
-        description="Dynamic lead score 0.0-1.0",
+        description="Suhbatning dinamik bahosi 0.0-1.0",
     )
     needs_lawyer: bool = Field(
         default=False,
-        description="Whether user needs a lawyer",
+        description="Advokat yordami kerakmi",
     )
     problem_description: str = Field(
         default="",
-        description="Brief description of user's legal problem",
+        description="Foydalanuvchining huquqiy muammosi haqida qisqacha tavsif (FAQAT o'zbek tilida)",
     )
     location: str = Field(
         default="",
-        description="User's location/city if mentioned",
+        description="Foydalanuvchining hududi (viloyat yoki shahar)",
     )
     phone_number: str = Field(
         default="",
-        description="User's phone number if mentioned",
+        description="Telefon raqami yoki aloqa ma'lumotlari",
     )
     full_name: str = Field(
         default="",
-        description="User's full name if mentioned",
+        description="Foydalanuvchining to'liq ismi (agar aytilgan bo'lsa)",
     )
     preferred_contact_time: str = Field(
         default="",
-        description="User's preferred contact time if mentioned",
+        description="Foydalanuvchi bilan bog'lanish uchun qulay vaqt",
     )
     has_documents: bool = Field(
         default=False,
-        description="Whether user mentioned having documents",
+        description="Foydalanuvchida hujjatlar bormi",
     )
     urgency: str = Field(
         default="low",
-        description="Urgency level: low, medium, high",
+        description="Shoshilinchlik darajasi: high, medium, yoki low",
     )
 
 
@@ -293,6 +287,7 @@ FORMAT:
     ) -> types.GenerateContentResponse:
         """Faqat belgilangan model (self._model) orqali so'rov yuborish va 503 xatolarida retry qilish."""
         import asyncio
+
         from google.genai import errors
 
         last_error = None
@@ -390,9 +385,10 @@ FORMAT:
             config_kwargs["tools"] = tools
             # Append JSON format instruction to the message
             json_instruction = (
-                "\n\n[IMPORTANT: Respond ONLY with valid JSON in this exact format: "
-                '{"ai_response": "your response text here", '
-                '"intent": "informational_query|consultation|service_request", '
+                "\n\n[IMPORTANT: Respond ONLY with valid JSON in this exact format. "
+                "MUHIM: \"problem_description\" qiymati FAQAT O'zbek tilida yozilishi kerak. Ingliz tilida yozmang. Format:\n"
+                '{"ai_response": "javob matni", '
+                '"intent": "legal_question|service_request|greeting|general", '
                 '"needs_lawyer": false, '
                 '"problem_description": "", '
                 '"location": "", '
@@ -427,8 +423,7 @@ FORMAT:
                         raw_text = raw_text[7:]
                     elif raw_text.startswith("```"):
                         raw_text = raw_text[3:]
-                    if raw_text.endswith("```"):
-                        raw_text = raw_text[:-3]
+                    raw_text = raw_text.removesuffix("```")
                     response_data = json.loads(raw_text.strip(), strict=False)
                     enhanced = EnhancedResponse(**response_data)
                 except Exception as json_exc:

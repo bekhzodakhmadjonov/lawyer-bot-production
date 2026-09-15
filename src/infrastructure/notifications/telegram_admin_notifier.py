@@ -14,7 +14,9 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from config.settings import Settings
 from domain.entities import Conversation, Lead, User
 from domain.value_objects import LeadStatus, MessageSender
-from infrastructure.persistence.postgres_conversation_repo import PostgresConversationRepo
+from infrastructure.persistence.postgres_conversation_repo import (
+    PostgresConversationRepo,
+)
 from infrastructure.persistence.postgres_notification_registry import (
     PostgresNotificationRegistry,
 )

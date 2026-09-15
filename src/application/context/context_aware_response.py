@@ -56,7 +56,7 @@ class ContextAwareResponseGenerator:
         "ariza", "dalil", "javobgarlik", "majburiyat", "modda",
         "kodeks", "tartib", "protsedura", "biznes", "fuqarolik", "jinoiy",
         "oila", "nikoh", "taloq", "meros", "ijara", "qarz", "bankrot",
-        "solik", "bojxona", "viz", "pasport", "fuqarolik", "passport",
+        "solik", "bojxona", "viz", "pasport", "passport",
     }
 
     # Search-worthy patterns - messages that benefit from web search
