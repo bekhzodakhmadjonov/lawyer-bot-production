@@ -300,12 +300,8 @@ def _greeting_message() -> str:
         "• keyingi qadamlar bo‘yicha yo‘nalish beraman;\n"
         "• agar masalangizda advokat yordami kerak bo‘lsa, sizni Advokat Jasurbek jamoasiga bog‘lashga yordam beraman.\n\n"
         "💬 <b>Savolingizni oddiy tilda yozing.</b>\n\n"
-        "<b>Masalan:</b>\n"
-        "▫️ <i>“Ish beruvchim meni ogohlantirmasdan ishdan bo‘shatdi. Nima qilishim mumkin?”</i>\n\n"
-        "▫️ <i>“2 nafar farzandim uchun aliment qancha bo‘ladi?”</i>\n\n"
-        "▫️ <i>“Menga shartnoma bo‘yicha da’vo kelgan, nima qilishim kerak?”</i>\n\n"
-        "▫️ <i>“Merosni qanday rasmiylashtirish mumkin?”</i>\n\n"
         "📌 <i>Vaziyatingizni imkon qadar aniq yozing: nima bo‘ldi, qachon bo‘ldi va qanday hujjatlar mavjud.</i>\n\n"
+        "💰 <i>Advokat xizmatlari pullik asosda ko'rsatiladi.</i>\n\n"
         "👇 <b>Savolingizni yozing:</b>"
     )
 
@@ -321,6 +317,7 @@ def _subscription_required_message() -> str:
         "• qonun va huquqiy tartiblarni tushunishingiz;\n"
         "• vaziyatingiz bo‘yicha keyingi qadamlarni aniqlashingiz;\n"
         "• zarur bo‘lsa, advokat jamoasi bilan bog‘lanishingiz mumkin.\n\n"
+        "💰 <i>Advokat xizmatlari pullik asosda ko'rsatiladi.</i>\n\n"
         "📢 <b>Botdan foydalanishni davom ettirish uchun kanalimizga a’zo bo‘ling.</b>\n\n"
         "Kanalimizda huquqiy maslahatlar, qonunchilikdagi yangiliklar va amaliy tavsiyalar berib boriladi.\n\n"
         "👇 A’zo bo‘ling va <b>“✅ Qo‘shildim”</b> tugmasini bosing."
@@ -335,8 +332,7 @@ def _subscription_confirmed_message() -> str:
         "🤖 Men vaziyatingizni tahlil qilib, imkon qadar tushunarli javob beraman.\n\n"
         "📌 <b>Yaxshiroq javob olish uchun:</b>\n"
         "<i>Nima bo‘ldi? → Qachon bo‘ldi? → Qanday hujjatlaringiz bor?</i>\n\n"
-        "<b>Masalan:</b>\n"
-        "<i>“Ish beruvchim meni 3 kun oldin ishdan bo‘shatdi. Hech qanday ogohlantirish berilmagan. Menda mehnat shartnomasi bor.”</i>\n\n"
+        "💰 <i>Advokat xizmatlari pullik asosda ko'rsatiladi.</i>\n\n"
         "👇 <b>Savolingizni yozing:</b>"
     )
 
@@ -562,7 +558,7 @@ def _leads_list_keyboard(
         lead_btns: list[InlineKeyboardButton] = []
         chunk_size = 2 if leads_count <= 4 else 5
         for i in range(offset + 1, offset + leads_count + 1):
-            btn_text = f"🔍 #{i} Ochish" if leads_count <= 4 else f"🔍 #{i}"
+            btn_text = f"{i} Ochish" if leads_count <= 4 else f"{i}"
             lead_btns.append(
                 InlineKeyboardButton(
                     text=btn_text,
@@ -572,7 +568,7 @@ def _leads_list_keyboard(
         for chunk in [lead_btns[i : i + chunk_size] for i in range(0, len(lead_btns), chunk_size)]:
             keyboard.append(chunk)
 
-    # 2. Navigatsiya qatori
+    # 2. Navigatsiya qatori 
     if total_pages > 1:
         nav_row: list[InlineKeyboardButton] = []
         if page > 0:
@@ -1806,8 +1802,9 @@ async def cmd_help(message: types.Message) -> None:
         "• /start — Suhbatni yangidan boshlash\n"
         "• /help — Bot bo‘yicha qo‘llanma\n\n"
         "🔒 <b>Xavfsizlik eslatmasi:</b>\n"
-        "<i>Bank kartasi parollari yoki maxfiy shaxsiy ma’lumotlarni yubormang.</i>\n\n"
-        "👇 <b>Savolingiz bo‘lsa, to‘g‘ridan-to‘g‘ri yozib yuborishingiz mumkin!</b>"
+        "<i>Bank kartasi parollari yoki maxfiy shaxsiy ma'lumotlarni yubormang.</i>\n\n"
+        "💰 <b>Narx:</b> <i>Advokat Jasurbek jamoasining konsultatsiya va ish yuritish xizmatlari pullik asosda ko'rsatiladi.</i>\n\n"
+        "👇 <b>Savolingiz bo'lsa, to'g'ridan-to'g'ri yozib yuborishingiz mumkin!</b>"
     )
     await message.answer(
         text,
@@ -2120,7 +2117,7 @@ async def on_user_message(
     conversation_repo: PostgresConversationRepo,
     user_repo: PostgresUserRepo,
     settings: Settings,
-) -> None:
+) -> None: 
     """Har qanday oddiy matn xabarini qayta ishlash (asosiy pipeline)."""
     if message.from_user is None or not message.text:
         return

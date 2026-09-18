@@ -47,7 +47,8 @@ class HandledUserMessageUseCase:
 
     _AI_FAILURE_FALLBACK = (
         "Kechirasiz, hozir texnik sababga ko'ra javob tayyorlay olmadim. "
-        "So'rovingiz mutaxassisga yuborildi, tez orada aloqaga chiqishadi."
+        "So'rovingiz mutaxassisga yuborildi, tez orada aloqaga chiqishadi.\n\n"
+        "💰 Eslatma: advokat xizmatlari pullik asosda ko'rsatiladi."
     )
     _AI_FAILURE_ESCALATION_REASON = "AI provider unavailable."
 
@@ -179,7 +180,8 @@ class HandledUserMessageUseCase:
                 return (
                     "✉️ <b>Xabaringiz mutaxassisga yuborildi.</b>\n\n"
                     "Jasurbek advokat jamoasi ko'rib chiqadi — "
-                    "javob tez orada keladi."
+                    "javob tez orada keladi.\n\n"
+                    "💰 <i>Eslatma: konsultatsiya va ish yuritish xizmatlari pullik asosda ko'rsatiladi.</i>"
                 )
 
         # 6b. COLLECTING_INFO holatidagi suhbatni boshqarish
@@ -418,7 +420,8 @@ class HandledUserMessageUseCase:
             escalation_msg = (
                 "✉️ <b>So'rovingiz mutaxassisga yuborildi!</b>\n\n"
                 "Advokat Jasurbek Tojiboyev jamoasi tez orada siz bilan bog'lanadi.\n"
-                "Qo'shimcha savol yoki ma'lumot bo'lsa — shu yerda yozishingiz mumkin."
+                "Qo'shimcha savol yoki ma'lumot bo'lsa — shu yerda yozishingiz mumkin.\n\n"
+                "💰 <i>Eslatma: Advokat Jasurbek jamoasining konsultatsiya va ish yuritish xizmatlari pullik asosda ko'rsatiladi.</i>"
             )
             # Save escalation message too
             await self._conversation_repo.add_message(

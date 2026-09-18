@@ -345,7 +345,8 @@ async def test_direct_lawyer_request_rule_based(
         "💼 <b>Advokat kerakligini aytdingiz.</b>\n\n"
         "Qanday huquqiy muammoingiz bor? Qisqacha bayon qiling.\n\n"
         "📍 <b>Qaysi shaharda yashaysiz?</b>\n\n"
-        "📄 <b>Qo'lingizda hujjatlar bormi?</b>"
+        "📄 <b>Qo'lingizda hujjatlar bormi?</b>\n\n"
+        "💰 <i>Eslatma: advokat xizmatlari pullik asosda ko'rsatiladi.</i>"
     )
     assert response == expected
     assert len(llm.calls) == 0

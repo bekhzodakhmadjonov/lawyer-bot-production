@@ -75,6 +75,7 @@ class ContextAwareResponseGenerator:
         "• Nima bo'ldi?\n"
         "• Qachon bo'ldi?\n"
         "• Qo'lingizda qanday hujjatlar bor?\n\n"
+        "💰 <i>Advokat xizmatlari pullik asosda ko'rsatiladi.</i>\n\n"
         "👇 <b>Savolingizni yozing:</b>"
     )
 
@@ -82,7 +83,8 @@ class ContextAwareResponseGenerator:
         "💼 <b>Advokat kerakligini aytdingiz.</b>\n\n"
         "Qanday huquqiy muammoingiz bor? Qisqacha bayon qiling.\n\n"
         "📍 <b>Qaysi shaharda yashaysiz?</b>\n\n"
-        "📄 <b>Qo'lingizda hujjatlar bormi?</b>"
+        "📄 <b>Qo'lingizda hujjatlar bormi?</b>\n\n"
+        "💰 <i>Eslatma: advokat xizmatlari pullik asosda ko'rsatiladi.</i>"
     )
 
     GRATITUDE_RESPONSE = (
@@ -113,7 +115,8 @@ class ContextAwareResponseGenerator:
                     "💼 <b>Advokat kerakligini aytdingiz.</b>\n\n"
                     f"Vaziyatingizni tushundim. "
                     f"{'Qaysi shaharda yashaysiz?' if not context.has_location else ''} "
-                    f"{'Qo\'lingizda hujjatlar bormi?' if not context.has_documents else ''}"
+                    f"{'Qo\'lingizda hujjatlar bormi?' if not context.has_documents else ''}\n\n"
+                    "💰 <i>Eslatma: advokat xizmatlari pullik asosda ko'rsatiladi.</i>"
                 ).strip()
             return self.SERVICE_REQUEST_RESPONSE
 
@@ -134,6 +137,7 @@ class ContextAwareResponseGenerator:
                     "👋 <b>Assalomu alaykum!</b>\n\n"
                     "Men Advokat Jasurbek jamoasining AI yordamchisiman. "
                     "Vaziyatingizni tushundim. Sizga yordam berishdan xursandman.\n\n"
+                    "💰 <i>Advokat xizmatlari pullik asosda ko'rsatiladi.</i>\n\n"
                     "👇 <b>Yana savolingiz bormi?</b>"
                 )
             return self.GREETING_RESPONSE

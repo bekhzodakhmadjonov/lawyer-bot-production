@@ -63,21 +63,25 @@ def test_greeting_message_is_compact_and_actionable() -> None:
     text = _greeting_message()
 
     assert "Advokat Jasurbek" in text
-    assert "Masalan:" in text
-    assert "ishdan bo‘shatdi" in text
-    assert "aliment" in text
+    assert "pullik" in text
     assert "<b>" in text
     assert "**" not in text
+    # Placeholder examples have been removed — no Masalan block expected
+    assert "Masalan:" not in text
+    assert "ishdan bo'shatdi" not in text
 
 
 def test_subscription_messages_include_clear_next_steps() -> None:
     required_text = _subscription_required_message()
     confirmed_text = _subscription_confirmed_message()
 
-    assert "kanalimizga a’zo bo‘ling" in required_text
-    assert "Qo‘shildim" in required_text
-    assert "Masalan:" in confirmed_text
-    assert "ishdan bo‘shatdi" in confirmed_text
+    assert "kanalimizga" in required_text
+    assert "shildim" in required_text  # "✅ Qo'shildim" button text
+    # Placeholder examples have been removed — no Masalan block expected
+    assert "Masalan:" not in confirmed_text
+    assert "ishdan bo'shatdi" not in confirmed_text and "ishdan bo\u2019shatdi" not in confirmed_text
+    # Paid disclaimer must be present
+    assert "pullik" in confirmed_text
     assert "**" not in required_text
     assert "**" not in confirmed_text
 
